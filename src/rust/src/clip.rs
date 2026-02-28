@@ -47,7 +47,13 @@ pub fn clip_geometry_to_tile(geom: &Geometry, coord: &TileCoord) -> Option<Geome
             }
         }
         Geometry::LineString(ls) => {
-            clip_linestring(ls, &buffered).map(Geometry::MultiLineString)
+            clip_linestring(ls, &buffered).map(|mls| {
+                if mls.0.len() == 1 {
+                    Geometry::LineString(mls.0.into_iter().next().unwrap())
+                } else {
+                    Geometry::MultiLineString(mls)
+                }
+            })
         }
         Geometry::MultiLineString(mls) => {
             let mut all_lines = Vec::new();
@@ -63,7 +69,13 @@ pub fn clip_geometry_to_tile(geom: &Geometry, coord: &TileCoord) -> Option<Geome
             }
         }
         Geometry::Polygon(poly) => {
-            clip_polygon_sh(poly, &buffered).map(Geometry::MultiPolygon)
+            clip_polygon_sh(poly, &buffered).map(|mp| {
+                if mp.0.len() == 1 {
+                    Geometry::Polygon(mp.0.into_iter().next().unwrap())
+                } else {
+                    Geometry::MultiPolygon(mp)
+                }
+            })
         }
         Geometry::MultiPolygon(mp) => {
             let mut all_polys = Vec::new();

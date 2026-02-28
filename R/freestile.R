@@ -65,10 +65,15 @@ freestile <- function(
 
   # Transform to WGS84 if needed
   crs <- sf::st_crs(input)
-  if (!is.na(crs) && crs$epsg != 4326) {
+  if (is.na(crs)) {
+    warning("Input has no CRS. Assuming WGS84 (EPSG:4326).", call. = FALSE)
+  } else if (!sf::st_is_longlat(input)) {
     if (!quiet) message("Transforming to WGS84 (EPSG:4326)...")
     input <- sf::st_transform(input, 4326)
   }
+
+  # Drop Z/M dimensions if present (no-op for XY geometries)
+  input <- sf::st_zm(input, drop = TRUE, what = "ZM")
 
   if (!quiet) {
     message(sprintf(
