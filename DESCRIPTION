@@ -1,0 +1,23 @@
+Package: freestiler
+Title: Create Vector Tiles from Spatial Data
+Version: 0.1.0
+Authors@R: c(
+    person("Kyle", "Walker", , "kyle@walker-data.com", role = c("aut", "cre"))
+  )
+Description: Create vector tile archives in PMTiles format from sf spatial
+    data frames. Supports Mapbox Vector Tile (MVT) and MapLibre Tile (MLT)
+    output formats. Uses a Rust backend via 'extendr' for fast, in-memory
+    tiling with zero external system dependencies.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
+Imports:
+    sf
+Suggests:
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+Config/rextendr/version: 0.4.2.9000
+SystemRequirements: Cargo (Rust's package manager), rustc >= 1.70
+Depends:
+    R (>= 4.2)

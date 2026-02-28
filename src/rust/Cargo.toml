@@ -1,0 +1,38 @@
+[package]
+name = "freestiler"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["staticlib"]
+name = "freestiler"
+
+[dependencies]
+extendr-api = "0.8"
+
+# Geometry operations
+geo = "0.29"
+geo-types = "0.7"
+
+# Protobuf encoding for MVT
+prost = "0.13"
+
+# PMTiles archive writing
+pmtiles2 = "0.3"
+
+# Varint encoding for MLT format
+integer-encoding = "4"
+
+# Gzip compression
+flate2 = "1"
+
+# JSON metadata
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Parallel tile encoding
+rayon = "1.10"
+
+[profile.release]
+lto = true
+codegen-units = 1

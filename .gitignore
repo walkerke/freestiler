@@ -1,0 +1,13 @@
+src/rust/target
+src/rust/vendor
+src/.cargo
+src/Makevars
+src/Makevars.win
+src/*.o
+src/*.so
+src/*.dll
+*.Rproj.user
+.Rhistory
+.RData
+.Rproj.user
+examples/

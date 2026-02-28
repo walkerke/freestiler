@@ -1,0 +1,7 @@
+^\.Rproj\.user$
+^.*\.Rproj$
+^\.gitignore$
+^LICENSE\.md$
+^src/\.cargo$
+^src/rust/target$
+^src/rust/vendor$
