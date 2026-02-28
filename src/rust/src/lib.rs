@@ -2,7 +2,6 @@ use extendr_api::prelude::*;
 use geo_types::{Coord, LineString, MultiLineString, MultiPolygon, Point, Polygon};
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 // R console flush (Rprintf output is buffered; flush to show progress immediately)
@@ -280,8 +279,6 @@ fn rust_freestile(
             flush_console();
         }
 
-        let dropped_count = AtomicUsize::new(0);
-
         // Process tiles in parallel
         let tile_coords: Vec<TileCoord> = all_coords.into_iter().collect();
         let zoom_tiles: Vec<(TileCoord, Vec<u8>)> = tile_coords
@@ -300,7 +297,6 @@ fn rust_freestile(
                                 // Check drop mask
                                 if let Some(ref mask) = al.drop_mask {
                                     if !mask[idx] {
-                                        dropped_count.fetch_add(1, Ordering::Relaxed);
                                         return None;
                                     }
                                 }
@@ -310,22 +306,6 @@ fn rust_freestile(
                                     Some(g) => g,
                                     None => &feature.geometry,
                                 };
-
-                                // Sub-pixel dropping for non-points (baseline filter)
-                                if zoom < max_z && al.drop_mask.is_none() {
-                                    if !matches!(
-                                        geom_to_process,
-                                        Geometry::Point(_) | Geometry::MultiPoint(_)
-                                    ) {
-                                        let bbox = tiler::geometry_bbox(geom_to_process);
-                                        let w = bbox.max().x - bbox.min().x;
-                                        let h = bbox.max().y - bbox.min().y;
-                                        if w < pixel_deg && h < pixel_deg {
-                                            dropped_count.fetch_add(1, Ordering::Relaxed);
-                                            return None;
-                                        }
-                                    }
-                                }
 
                                 // Clip to tile boundaries
                                 let clipped =
@@ -386,25 +366,15 @@ fn rust_freestile(
             .collect();
 
         let n_encoded = zoom_tiles.len();
-        let n_dropped = dropped_count.load(Ordering::Relaxed);
         all_tiles.extend(zoom_tiles);
 
         if !quiet {
             let elapsed = zoom_start.elapsed().as_secs_f64();
-            if n_dropped > 0 {
-                rprintln!(
-                    "           {:>6} encoded, {} dropped ({:.1}s)",
-                    n_encoded,
-                    n_dropped,
-                    elapsed
-                );
-            } else {
-                rprintln!(
-                    "           {:>6} encoded ({:.1}s)",
-                    n_encoded,
-                    elapsed
-                );
-            }
+            rprintln!(
+                "           {:>6} encoded ({:.1}s)",
+                n_encoded,
+                elapsed
+            );
             flush_console();
         }
     }
@@ -423,6 +393,10 @@ fn rust_freestile(
     }
 
     // Write PMTiles archive
+    if !quiet {
+        rprintln!("  Writing PMTiles archive ({} tiles) ...", all_tiles.len());
+        flush_console();
+    }
     let write_start = Instant::now();
     match pmtiles_writer::write_pmtiles(
         output_path,

@@ -1,8 +1,11 @@
 use std::fs::File;
 use std::io::{Seek, SeekFrom, Write};
 
-use pmtiles2::util::{compress_all, tile_id};
+use flate2::write::GzEncoder;
+use flate2::Compression;
+use pmtiles2::util::tile_id;
 use pmtiles2::{Compression as PmCompression, PMTiles, TileType};
+use rayon::prelude::*;
 use serde_json::{json, Value};
 
 use crate::tiler::TileCoord;
@@ -20,6 +23,17 @@ pub struct LayerMeta {
     pub property_names: Vec<String>,
     pub min_zoom: u8,
     pub max_zoom: u8,
+}
+
+/// Gzip-compress a tile at level 1 (fast)
+fn gzip_compress_fast(data: &[u8]) -> Result<Vec<u8>, String> {
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
+    encoder
+        .write_all(data)
+        .map_err(|e| format!("Compression error: {}", e))?;
+    encoder
+        .finish()
+        .map_err(|e| format!("Compression finish error: {}", e))
 }
 
 /// Write tiles into a PMTiles archive
@@ -72,14 +86,19 @@ pub fn write_pmtiles(
     });
     pm.meta_data = metadata.as_object().unwrap().clone();
 
-    // Add tiles (pre-compress with gzip)
-    for (coord, data) in &tiles {
-        if data.is_empty() {
-            continue;
-        }
+    // Parallel gzip compression at level 1 (fast) using rayon
+    let compressed_tiles: Vec<(TileCoord, Vec<u8>)> = tiles
+        .into_par_iter()
+        .filter(|(_, data)| !data.is_empty())
+        .map(|(coord, data)| {
+            let compressed = gzip_compress_fast(&data).expect("gzip compression failed");
+            (coord, compressed)
+        })
+        .collect();
+
+    // Add pre-compressed tiles to archive
+    for (coord, compressed) in compressed_tiles {
         let tid = tile_id(coord.z, coord.x as u64, coord.y as u64);
-        let compressed =
-            compress_all(PmCompression::GZip, data).map_err(|e| format!("Compression error: {}", e))?;
         pm.add_tile(tid, compressed)
             .map_err(|e| format!("Error adding tile z={} x={} y={}: {}", coord.z, coord.x, coord.y, e))?;
     }

@@ -2,73 +2,52 @@
 % Please edit documentation in R/extendr-wrappers.R
 \name{rust_freestile}
 \alias{rust_freestile}
-\title{Create vector tiles from spatial data}
+\title{Create vector tiles from spatial data (multi-layer support)}
 \usage{
 rust_freestile(
-  geom_type,
-  coords_x,
-  coords_y,
-  geom_offsets,
-  ring_offsets,
-  part_offsets,
-  prop_names,
-  prop_types,
-  prop_char_values,
-  prop_num_values,
-  prop_int_values,
-  prop_lgl_values,
+  layers,
   output_path,
-  layer_name,
   tile_format,
-  min_zoom,
-  max_zoom,
+  global_min_zoom,
+  global_max_zoom,
   do_simplify,
-  generate_ids
+  generate_ids,
+  quiet,
+  drop_rate,
+  cluster_distance,
+  cluster_maxzoom,
+  do_coalesce
 )
 }
 \arguments{
-\item{geom_type}{Character vector of geometry types}
-
-\item{coords_x}{Numeric vector of X coordinates (longitude)}
-
-\item{coords_y}{Numeric vector of Y coordinates (latitude)}
-
-\item{geom_offsets}{Integer vector: start index in coords for each geometry}
-
-\item{ring_offsets}{Integer vector: start index in coords for each ring (polygons)}
-
-\item{part_offsets}{Integer vector: start index in rings/lines for multi-geometries}
-
-\item{prop_names}{Character vector of property column names}
-
-\item{prop_types}{Character vector of property types}
-
-\item{prop_char_values}{List of character property columns}
-
-\item{prop_num_values}{List of numeric property columns}
-
-\item{prop_int_values}{List of integer property columns}
-
-\item{prop_lgl_values}{List of logical property columns}
+\item{layers}{List of layer lists}
 
 \item{output_path}{Path for output .pmtiles file}
 
-\item{layer_name}{Name of the tile layer}
-
 \item{tile_format}{"mvt" or "mlt"}
 
-\item{min_zoom}{Minimum zoom level}
+\item{global_min_zoom}{Minimum zoom level}
 
-\item{max_zoom}{Maximum zoom level}
+\item{global_max_zoom}{Maximum zoom level}
 
 \item{do_simplify}{Whether to simplify geometries at lower zooms}
 
 \item{generate_ids}{Whether to generate sequential feature IDs}
+
+\item{quiet}{Whether to suppress progress messages}
+
+\item{drop_rate}{Exponential drop rate (negative = off)}
+
+\item{cluster_distance}{Pixel distance for clustering (negative = off)}
+
+\item{cluster_maxzoom}{Max zoom for clustering (negative = use max_zoom - 1)}
+
+\item{do_coalesce}{Whether to coalesce features with same attributes}
 }
 \value{
 The output file path or an error message
 }
 \description{
-Create vector tiles from spatial data
+Create vector tiles from spatial data (multi-layer support)
 }
 \keyword{internal}

@@ -28,28 +28,34 @@ const GEOM_MULTI_POINT: u8 = 3;
 const GEOM_MULTI_LINESTRING: u8 = 4;
 const GEOM_MULTI_POLYGON: u8 = 5;
 
-// Stream types (high nibble)
-const STREAM_DATA: u8 = 0x00;
-const STREAM_LENGTH: u8 = 0x10;
-const STREAM_PRESENT: u8 = 0x30;
+// PhysicalStreamType ordinals (upper nibble of byte 0)
+// Enum order: PRESENT=0, DATA=1, OFFSET=2, LENGTH=3
+const STREAM_PRESENT: u8 = 0; // ordinal 0
+const STREAM_DATA: u8 = 1;    // ordinal 1
+const STREAM_OFFSET: u8 = 2;  // ordinal 2
+const STREAM_LENGTH: u8 = 3;  // ordinal 3
 
-// Physical encodings (low nibble of byte 1)
-const PHYS_NONE: u8 = 0x00;
-const PHYS_VARINT: u8 = 0x02;
+// DictionaryType ordinals (lower nibble of byte 0, when stream type = DATA)
+// Enum order: NONE=0, SINGLE=1, SHARED=2, VERTEX=3, MORTON=4, FSST=5
+const DATA_NONE: u8 = 0;   // DictionaryType.NONE
+const DATA_VERTEX: u8 = 3; // DictionaryType.VERTEX
 
-// Logical encodings (high nibble of byte 1)
-const LOG_NONE: u8 = 0x00;
-const LOG_DELTA: u8 = 0x10;
-const LOG_COMPONENTWISE_DELTA: u8 = 0x20;
+// LengthType ordinals (lower nibble of byte 0, when stream type = LENGTH)
+// Enum order: VAR_BINARY=0, GEOMETRIES=1, PARTS=2, RINGS=3, TRIANGLES=4, SYMBOL=5, DICTIONARY=6
+const LENGTH_GEOMETRIES: u8 = 1;
+const LENGTH_PARTS: u8 = 2;
+const LENGTH_RINGS: u8 = 3;
 
-// Data sub-types (low nibble of stream type byte)
-const DATA_NONE: u8 = 0x00;
-const DATA_VERTEX: u8 = 0x03;
+// LogicalLevelTechnique ordinals (3 bits each in byte 1)
+// Enum order: NONE=0, DELTA=1, COMPONENTWISE_DELTA=2, RLE=3, MORTON=4, PDE=5
+const LOG_NONE: u8 = 0;
+const LOG_DELTA: u8 = 1;
+const LOG_COMPONENTWISE_DELTA: u8 = 2;
 
-// Length sub-types
-const LENGTH_GEOMETRIES: u8 = 0x01;
-const LENGTH_PARTS: u8 = 0x02;
-const LENGTH_RINGS: u8 = 0x03;
+// PhysicalLevelTechnique ordinals (2 bits in byte 1)
+// Enum order: NONE=0, FAST_PFOR=1, VARINT=2, ALP=3
+const PHYS_NONE: u8 = 0;
+const PHYS_VARINT: u8 = 2;
 
 /// Encode features from multiple layers into a single MLT tile
 pub fn encode_tile_multilayer(
@@ -96,32 +102,43 @@ pub fn encode_tile(
     let num_columns = 2 + property_names.len();
     write_varint_usize(&mut layer_data, num_columns);
 
-    // Column metadata
-    // 1. ID column
-    layer_data.push(COL_ID);
-    // 2. Geometry column
-    layer_data.push(COL_GEOMETRY);
-    // 3. Property columns
+    // Column metadata (type codes as varints per spec)
+    // 1. ID column (type code 0 = non-nullable short ID; no name for types < 10)
+    write_varint_usize(&mut layer_data, COL_ID as usize);
+    // 2. Geometry column (type code 4; no name for types < 10)
+    write_varint_usize(&mut layer_data, COL_GEOMETRY as usize);
+    // 3. Property columns (types >= 10 have a name)
     for (i, name) in property_names.iter().enumerate() {
         let col_type = infer_column_type(features, i);
-        layer_data.push(col_type);
+        write_varint_usize(&mut layer_data, col_type as usize);
         write_string(&mut layer_data, name);
     }
 
     // Now write streams
 
-    // --- ID stream ---
+    // --- ID stream (delta-encoded unsigned varints) ---
     {
         let ids: Vec<u64> = features
             .iter()
             .map(|f| f.id.unwrap_or(0))
             .collect();
-        let id_bytes = encode_varint_u64_stream(&ids);
-        write_stream_meta(&mut layer_data, STREAM_DATA | DATA_NONE, LOG_DELTA | PHYS_VARINT, ids.len(), id_bytes.len());
+        // Delta encode: output differences between consecutive IDs
+        let mut deltas = Vec::with_capacity(ids.len());
+        let mut prev = 0u64;
+        for &id in &ids {
+            deltas.push(id.wrapping_sub(prev));
+            prev = id;
+        }
+        let id_bytes = encode_varint_u64_stream(&deltas);
+        write_stream_meta(&mut layer_data, STREAM_DATA, DATA_NONE, LOG_DELTA, LOG_NONE, PHYS_VARINT, ids.len(), id_bytes.len());
         layer_data.extend(&id_bytes);
     }
 
     // --- Geometry streams ---
+    // Write geometry stream count before the streams (spec requirement)
+    let geom_stream_count = count_geometry_streams(features);
+    write_varint_usize(&mut layer_data, geom_stream_count);
+
     encode_geometry_streams(
         &mut layer_data,
         features,
@@ -130,14 +147,26 @@ pub fn encode_tile(
 
     // --- Property streams ---
     for (i, _name) in property_names.iter().enumerate() {
+        let col_type = infer_column_type(features, i);
+        // STRING columns need a stream count varint (hasStreamCount = true)
+        if col_type == COL_STR || col_type == COL_OPT_STR {
+            let has_nulls = features.iter().any(|f| {
+                i >= f.properties.len() || matches!(f.properties[i], PropertyValue::Null)
+            });
+            // presence stream (if nullable) + length stream + data stream
+            let stream_count: usize = if has_nulls { 3 } else { 2 };
+            write_varint_usize(&mut layer_data, stream_count);
+        }
         encode_property_stream(&mut layer_data, features, i);
     }
 
-    // Wrap in layer envelope: size (varint) + tag (u8) + layer_data
+    // Wrap in layer envelope: varint(length) + varint(tag=1) + layer_data
     let mut tile_bytes = Vec::new();
-    let total_size = 1 + layer_data.len(); // tag + payload
+    let mut tag_buf = [0u8; 5];
+    let tag_len = (TAG_V01 as u32).encode_var(&mut tag_buf);
+    let total_size = tag_len + layer_data.len();
     write_varint_usize(&mut tile_bytes, total_size);
-    tile_bytes.push(TAG_V01);
+    tile_bytes.extend_from_slice(&tag_buf[..tag_len]);
     tile_bytes.extend(&layer_data);
 
     tile_bytes
@@ -178,6 +207,32 @@ fn infer_column_type(features: &[Feature], prop_idx: usize) -> u8 {
     }
 }
 
+/// Count the number of geometry streams that will be written.
+/// Always: geom_type_stream (1) + vertex_stream (1) = 2
+/// Plus: num_geometries if any multi-types, num_parts if any lines/polys, num_rings if any polys
+fn count_geometry_streams(features: &[Feature]) -> usize {
+    let mut has_multi = false;
+    let mut has_parts = false;
+    let mut has_rings = false;
+
+    for f in features {
+        match &f.geometry {
+            Geometry::Point(_) => {}
+            Geometry::MultiPoint(_) => { has_multi = true; }
+            Geometry::LineString(_) => { has_parts = true; }
+            Geometry::MultiLineString(_) => { has_multi = true; has_parts = true; }
+            Geometry::Polygon(_) => { has_parts = true; has_rings = true; }
+            Geometry::MultiPolygon(_) => { has_multi = true; has_parts = true; has_rings = true; }
+        }
+    }
+
+    let mut count = 2; // geom_type + vertex
+    if has_multi { count += 1; }
+    if has_parts { count += 1; }
+    if has_rings { count += 1; }
+    count
+}
+
 fn encode_geometry_streams(
     out: &mut Vec<u8>,
     features: &[Feature],
@@ -190,7 +245,7 @@ fn encode_geometry_streams(
 
     // 1. Geometry type stream (one byte per feature)
     let geom_types: Vec<u8> = features.iter().map(|f| geometry_type_byte(&f.geometry)).collect();
-    write_stream_meta(out, STREAM_DATA | DATA_NONE, LOG_NONE | PHYS_NONE, n, geom_types.len());
+    write_stream_meta(out, STREAM_DATA, DATA_NONE, LOG_NONE, LOG_NONE, PHYS_NONE, n, geom_types.len());
     out.extend(&geom_types);
 
     // Collect topology and vertex data
@@ -215,21 +270,21 @@ fn encode_geometry_streams(
     // 2. NumGeometries stream (for multi-types)
     if !num_geometries.is_empty() {
         let bytes = encode_varint_u32_stream(&num_geometries);
-        write_stream_meta(out, STREAM_LENGTH | LENGTH_GEOMETRIES, LOG_NONE | PHYS_VARINT, num_geometries.len(), bytes.len());
+        write_stream_meta(out, STREAM_LENGTH, LENGTH_GEOMETRIES, LOG_NONE, LOG_NONE, PHYS_VARINT, num_geometries.len(), bytes.len());
         out.extend(&bytes);
     }
 
     // 3. NumParts stream
     if !num_parts.is_empty() {
         let bytes = encode_varint_u32_stream(&num_parts);
-        write_stream_meta(out, STREAM_LENGTH | LENGTH_PARTS, LOG_NONE | PHYS_VARINT, num_parts.len(), bytes.len());
+        write_stream_meta(out, STREAM_LENGTH, LENGTH_PARTS, LOG_NONE, LOG_NONE, PHYS_VARINT, num_parts.len(), bytes.len());
         out.extend(&bytes);
     }
 
     // 4. NumRings stream
     if !num_rings.is_empty() {
         let bytes = encode_varint_u32_stream(&num_rings);
-        write_stream_meta(out, STREAM_LENGTH | LENGTH_RINGS, LOG_NONE | PHYS_VARINT, num_rings.len(), bytes.len());
+        write_stream_meta(out, STREAM_LENGTH, LENGTH_RINGS, LOG_NONE, LOG_NONE, PHYS_VARINT, num_rings.len(), bytes.len());
         out.extend(&bytes);
     }
 
@@ -245,7 +300,7 @@ fn encode_geometry_streams(
             interleaved.push(dy[i]);
         }
         let bytes = encode_zigzag_varint_i32_stream(&interleaved);
-        write_stream_meta(out, STREAM_DATA | DATA_VERTEX, LOG_COMPONENTWISE_DELTA | PHYS_VARINT, total_vertices * 2, bytes.len());
+        write_stream_meta(out, STREAM_DATA, DATA_VERTEX, LOG_COMPONENTWISE_DELTA, LOG_NONE, PHYS_VARINT, total_vertices * 2, bytes.len());
         out.extend(&bytes);
     }
 }
@@ -394,7 +449,7 @@ fn encode_property_stream(
                 byte = 0;
             }
         }
-        write_stream_meta(out, STREAM_PRESENT, LOG_NONE | PHYS_NONE, n, bitmap.len());
+        write_stream_meta(out, STREAM_PRESENT, 0, LOG_NONE, LOG_NONE, PHYS_NONE, n, bitmap.len());
         out.extend(&bitmap);
     }
 
@@ -427,10 +482,10 @@ fn encode_property_stream(
             }
             // Length stream
             let len_bytes = encode_varint_u32_stream(&lengths);
-            write_stream_meta(out, STREAM_LENGTH | 0x00, LOG_NONE | PHYS_VARINT, lengths.len(), len_bytes.len());
+            write_stream_meta(out, STREAM_LENGTH, 0, LOG_NONE, LOG_NONE, PHYS_VARINT, lengths.len(), len_bytes.len());
             out.extend(&len_bytes);
             // Data stream
-            write_stream_meta(out, STREAM_DATA | DATA_NONE, LOG_NONE | PHYS_NONE, string_data.len(), string_data.len());
+            write_stream_meta(out, STREAM_DATA, DATA_NONE, LOG_NONE, LOG_NONE, PHYS_NONE, string_data.len(), string_data.len());
             out.extend(&string_data);
         }
         COL_I64 | COL_OPT_I64 => {
@@ -450,7 +505,7 @@ fn encode_property_stream(
                 })
                 .collect();
             let bytes = encode_zigzag_varint_i64_stream(&vals);
-            write_stream_meta(out, STREAM_DATA | DATA_NONE, LOG_NONE | PHYS_VARINT, vals.len(), bytes.len());
+            write_stream_meta(out, STREAM_DATA, DATA_NONE, LOG_NONE, LOG_NONE, PHYS_VARINT, vals.len(), bytes.len());
             out.extend(&bytes);
         }
         COL_F64 | COL_OPT_F64 => {
@@ -473,7 +528,7 @@ fn encode_property_stream(
             for v in &vals {
                 bytes.extend(&v.to_le_bytes());
             }
-            write_stream_meta(out, STREAM_DATA | DATA_NONE, LOG_NONE | PHYS_NONE, vals.len(), bytes.len());
+            write_stream_meta(out, STREAM_DATA, DATA_NONE, LOG_NONE, LOG_NONE, PHYS_NONE, vals.len(), bytes.len());
             out.extend(&bytes);
         }
         COL_BOOL | COL_OPT_BOOL => {
@@ -497,7 +552,7 @@ fn encode_property_stream(
             if count % 8 != 0 {
                 bitmap.push(byte);
             }
-            write_stream_meta(out, STREAM_DATA | DATA_NONE, LOG_NONE | PHYS_NONE, count, bitmap.len());
+            write_stream_meta(out, STREAM_DATA, DATA_NONE, LOG_NONE, LOG_NONE, PHYS_NONE, count, bitmap.len());
             out.extend(&bitmap);
         }
         _ => {}
@@ -548,15 +603,25 @@ fn write_string(out: &mut Vec<u8>, s: &str) {
     out.extend_from_slice(bytes);
 }
 
+/// Write MLT stream metadata header.
+///
+/// Byte 0: (physicalStreamType << 4) | logicalSubtype
+/// Byte 1: (logicalLevelTechnique1 << 5) | (logicalLevelTechnique2 << 2) | physicalLevelTechnique
+/// Then: varint(numValues), varint(byteLength)
 fn write_stream_meta(
     out: &mut Vec<u8>,
-    stream_type: u8,
-    encoding: u8,
+    physical_stream_type: u8,
+    logical_subtype: u8,
+    logical_technique1: u8,
+    logical_technique2: u8,
+    physical_technique: u8,
     num_values: usize,
     byte_length: usize,
 ) {
-    out.push(stream_type);
-    out.push(encoding);
+    let byte0 = (physical_stream_type << 4) | logical_subtype;
+    let byte1 = (logical_technique1 << 5) | (logical_technique2 << 2) | physical_technique;
+    out.push(byte0);
+    out.push(byte1);
     write_varint_usize(out, num_values);
     write_varint_usize(out, byte_length);
 }

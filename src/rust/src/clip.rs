@@ -69,7 +69,7 @@ pub fn clip_geometry_to_tile(geom: &Geometry, coord: &TileCoord) -> Option<Geome
             }
         }
         Geometry::Polygon(poly) => {
-            clip_polygon_sh(poly, &buffered).map(|mp| {
+            clip_polygon(poly, &buffered).map(|mp| {
                 if mp.0.len() == 1 {
                     Geometry::Polygon(mp.0.into_iter().next().unwrap())
                 } else {
@@ -80,7 +80,7 @@ pub fn clip_geometry_to_tile(geom: &Geometry, coord: &TileCoord) -> Option<Geome
         Geometry::MultiPolygon(mp) => {
             let mut all_polys = Vec::new();
             for poly in &mp.0 {
-                if let Some(MultiPolygon(polys)) = clip_polygon_sh(poly, &buffered) {
+                if let Some(MultiPolygon(polys)) = clip_polygon(poly, &buffered) {
                     all_polys.extend(polys);
                 }
             }
@@ -98,7 +98,7 @@ fn point_in_rect(c: &Coord<f64>, rect: &Rect<f64>) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Linestring clipping (Cohen-Sutherland, unchanged)
+// Linestring clipping (Cohen-Sutherland)
 // ---------------------------------------------------------------------------
 
 /// Clip a linestring to a rectangle using Cohen-Sutherland line clipping
@@ -207,14 +207,17 @@ fn cohen_sutherland_clip(
 }
 
 // ---------------------------------------------------------------------------
-// Polygon clipping (Sutherland-Hodgman — O(4n) rectangle clipping)
+// Polygon clipping (geo::BooleanOps — topology-safe intersection)
 // ---------------------------------------------------------------------------
 
-/// Clip a polygon to a rectangle using Sutherland-Hodgman.
-/// Much faster than BooleanOps for rectangle clipping: O(4n) vs O((n+k)log n).
-fn clip_polygon_sh(poly: &Polygon<f64>, rect: &Rect<f64>) -> Option<MultiPolygon<f64>> {
-    // Fast path: entirely within the clip rect
+/// Clip a polygon to a rectangle using geo::BooleanOps::intersection.
+/// Correctly handles concave polygons that split into multiple pieces,
+/// and holes that cross the clip boundary.
+fn clip_polygon(poly: &Polygon<f64>, rect: &Rect<f64>) -> Option<MultiPolygon<f64>> {
+    use geo::BooleanOps;
     use geo::BoundingRect;
+
+    // Fast path: entirely within the clip rect
     if let Some(bbox) = poly.bounding_rect() {
         if bbox.min().x >= rect.min().x
             && bbox.max().x <= rect.max().x
@@ -233,132 +236,12 @@ fn clip_polygon_sh(poly: &Polygon<f64>, rect: &Rect<f64>) -> Option<MultiPolygon
         }
     }
 
-    // Clip exterior ring
-    let ext_verts = ring_vertices(poly.exterior());
-    let clipped_ext = sutherland_hodgman(ext_verts, rect);
-    if clipped_ext.len() < 3 {
-        return None;
-    }
+    let clip_poly = rect.to_polygon();
+    let result = poly.intersection(&clip_poly);
 
-    // Close the exterior ring
-    let mut ext_ring = clipped_ext;
-    ext_ring.push(ext_ring[0]);
-
-    // Clip interior rings (holes)
-    let mut interiors = Vec::new();
-    for hole in poly.interiors() {
-        let hole_verts = ring_vertices(hole);
-        let clipped_hole = sutherland_hodgman(hole_verts, rect);
-        if clipped_hole.len() >= 3 {
-            let mut ring = clipped_hole;
-            ring.push(ring[0]);
-            interiors.push(LineString(ring));
-        }
-    }
-
-    Some(MultiPolygon(vec![Polygon::new(
-        LineString(ext_ring),
-        interiors,
-    )]))
-}
-
-/// Extract ring vertices without the closing point (last == first)
-#[inline]
-fn ring_vertices(ring: &LineString<f64>) -> &[Coord<f64>] {
-    if ring.0.len() >= 2 && ring.0.first() == ring.0.last() {
-        &ring.0[..ring.0.len() - 1]
+    if result.0.is_empty() {
+        None
     } else {
-        &ring.0
+        Some(result)
     }
-}
-
-/// Sutherland-Hodgman polygon clipping against a rectangle.
-/// Input: polygon vertices (implicitly closed — last connects to first).
-/// Output: clipped polygon vertices (implicitly closed).
-fn sutherland_hodgman(vertices: &[Coord<f64>], rect: &Rect<f64>) -> Vec<Coord<f64>> {
-    if vertices.is_empty() {
-        return Vec::new();
-    }
-
-    let mut output = vertices.to_vec();
-
-    // Clip against left edge
-    output = clip_edge(&output, |p| p.x >= rect.min().x, |a, b| {
-        let t = (rect.min().x - a.x) / (b.x - a.x);
-        Coord {
-            x: rect.min().x,
-            y: a.y + t * (b.y - a.y),
-        }
-    });
-    if output.is_empty() {
-        return output;
-    }
-
-    // Clip against right edge
-    output = clip_edge(&output, |p| p.x <= rect.max().x, |a, b| {
-        let t = (rect.max().x - a.x) / (b.x - a.x);
-        Coord {
-            x: rect.max().x,
-            y: a.y + t * (b.y - a.y),
-        }
-    });
-    if output.is_empty() {
-        return output;
-    }
-
-    // Clip against bottom edge
-    output = clip_edge(&output, |p| p.y >= rect.min().y, |a, b| {
-        let t = (rect.min().y - a.y) / (b.y - a.y);
-        Coord {
-            x: a.x + t * (b.x - a.x),
-            y: rect.min().y,
-        }
-    });
-    if output.is_empty() {
-        return output;
-    }
-
-    // Clip against top edge
-    output = clip_edge(&output, |p| p.y <= rect.max().y, |a, b| {
-        let t = (rect.max().y - a.y) / (b.y - a.y);
-        Coord {
-            x: a.x + t * (b.x - a.x),
-            y: rect.max().y,
-        }
-    });
-
-    output
-}
-
-/// Clip polygon vertices against a single edge of the clip rectangle.
-#[inline]
-fn clip_edge(
-    input: &[Coord<f64>],
-    inside: impl Fn(&Coord<f64>) -> bool,
-    intersect: impl Fn(&Coord<f64>, &Coord<f64>) -> Coord<f64>,
-) -> Vec<Coord<f64>> {
-    if input.is_empty() {
-        return Vec::new();
-    }
-
-    let mut output = Vec::with_capacity(input.len() + 4);
-    let n = input.len();
-
-    for i in 0..n {
-        let current = &input[i];
-        let next = &input[(i + 1) % n];
-        let c_in = inside(current);
-        let n_in = inside(next);
-
-        if c_in {
-            output.push(*current);
-            if !n_in {
-                output.push(intersect(current, next));
-            }
-        } else if n_in {
-            output.push(intersect(current, next));
-        }
-    }
-
-    output
 }

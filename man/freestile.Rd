@@ -11,6 +11,10 @@ freestile(
   tile_format = "mlt",
   min_zoom = 0L,
   max_zoom = 14L,
+  drop_rate = NULL,
+  cluster_distance = NULL,
+  cluster_maxzoom = NULL,
+  coalesce = FALSE,
   simplification = TRUE,
   generate_ids = TRUE,
   overwrite = TRUE,
@@ -18,12 +22,13 @@ freestile(
 )
 }
 \arguments{
-\item{input}{An sf data frame.}
+\item{input}{An sf data frame, or a named list of sf/freestile_layer objects
+for multi-layer output.}
 
 \item{output}{Character. Path for the output .pmtiles file.}
 
 \item{layer_name}{Character. Name for the tile layer. If NULL, derived from
-the output filename.}
+the output filename. Only used for single-layer input.}
 
 \item{tile_format}{Character. Tile encoding format: \code{"mlt"} (default) for
 MapLibre Tiles or \code{"mvt"} for Mapbox Vector Tiles.}
@@ -32,8 +37,26 @@ MapLibre Tiles or \code{"mvt"} for Mapbox Vector Tiles.}
 
 \item{max_zoom}{Integer. Maximum zoom level (default 14).}
 
-\item{simplification}{Logical. Whether to simplify geometries at lower zoom
-levels using Douglas-Peucker (default TRUE).}
+\item{drop_rate}{Numeric. Exponential drop rate for feature thinning (e.g.
+2.5). At each zoom level below max_zoom, features are retained at a rate of
+1/drop_rate^(max_zoom - zoom). Points are thinned using spatial ordering;
+polygons/lines are thinned by area. NULL (default) uses only sub-pixel
+filtering.}
+
+\item{cluster_distance}{Numeric. Pixel distance for point clustering. Points
+within this radius are merged into cluster features with a \code{point_count}
+attribute. NULL (default) disables clustering.}
+
+\item{cluster_maxzoom}{Integer. Maximum zoom level for clustering. Above this
+zoom, individual points are shown. Default is max_zoom - 1.}
+
+\item{coalesce}{Logical. Whether to merge features with identical attributes
+within each tile (default FALSE). Lines sharing endpoints are merged;
+polygons are grouped into MultiPolygons.}
+
+\item{simplification}{Logical. Whether to snap geometries to the tile pixel
+grid at each zoom level (default TRUE). This provides zoom-adaptive
+simplification and prevents slivers between adjacent polygons.}
 
 \item{generate_ids}{Logical. Whether to assign sequential feature IDs
 (default TRUE).}
@@ -47,14 +70,31 @@ levels using Douglas-Peucker (default TRUE).}
 The output file path (invisibly).
 }
 \description{
-Creates a PMTiles archive containing vector tiles from an sf data frame.
-Supports both Mapbox Vector Tile (MVT) and MapLibre Tile (MLT) formats.
+Creates a PMTiles archive containing vector tiles from one or more sf data
+frames. Supports both Mapbox Vector Tile (MVT) and MapLibre Tile (MLT)
+formats, multi-layer output, feature dropping, point clustering, and feature
+coalescing.
 }
 \examples{
 \dontrun{
 library(sf)
 nc <- st_read(system.file("shape/nc.shp", package = "sf"))
+
+# Single layer
 freestile(nc, "nc.pmtiles", layer_name = "counties")
+
+# Multi-layer
+pts <- st_centroid(nc)
+freestile(
+  list(counties = nc, centroids = pts),
+  "nc_layers.pmtiles"
+)
+
+# With dropping and coalescing
+freestile(nc, "nc_drop.pmtiles", drop_rate = 2.5, coalesce = TRUE)
+
+# With point clustering
+freestile(pts, "pts.pmtiles", cluster_distance = 50, cluster_maxzoom = 8)
 }
 
 }
