@@ -168,20 +168,25 @@ freestile <- function(
       sf_obj <- sf::st_transform(sf_obj, 4326)
     }
 
-    # Drop Z/M dimensions
-    sf_obj <- sf::st_zm(sf_obj, drop = TRUE, what = "ZM")
+    # Drop Z/M dimensions only if present (st_zm walks every geometry).
+    # Checks the first geometry's dimension class — sf sfc objects are
+    # homogeneous in dimension, so the first element is representative.
+    geom_col <- attr(sf_obj, "sf_column")
+    sfc <- sf_obj[[geom_col]]
+    if (length(sfc) > 0L && class(sfc[[1L]])[1L] != "XY") {
+      sf_obj <- sf::st_zm(sf_obj, drop = TRUE, what = "ZM")
+      sfc <- sf_obj[[geom_col]]
+    }
 
     # Extract geometry and properties
-    geom_col <- attr(sf_obj, "sf_column")
-    geom <- sf_obj[[geom_col]]
     attrs <- sf::st_drop_geometry(sf_obj)
-    geom_types <- as.character(sf::st_geometry_type(geom))
+    geom_types <- as.character(sf::st_geometry_type(sfc))
     prop_data <- .extract_properties(attrs)
 
     # Build positional list for Rust (indices 0-10)
     list(
       l$name,                     # 0: name
-      geom,                       # 1: geometries (sfc)
+      sfc,                        # 1: geometries (sfc)
       geom_types,                 # 2: geom_types
       prop_data$names,            # 3: prop_names
       prop_data$types,            # 4: prop_types
@@ -311,34 +316,18 @@ freestile <- function(
     if (is.character(col) || is.factor(col)) {
       col_types[i] <- "character"
       char_values[[i]] <- as.character(col)
-      num_values[[i]] <- rep(NA_real_, length(col))
-      int_values[[i]] <- rep(NA_integer_, length(col))
-      lgl_values[[i]] <- rep(NA, length(col))
     } else if (is.integer(col)) {
       col_types[i] <- "integer"
-      char_values[[i]] <- rep(NA_character_, length(col))
-      num_values[[i]] <- rep(NA_real_, length(col))
       int_values[[i]] <- col
-      lgl_values[[i]] <- rep(NA, length(col))
     } else if (is.numeric(col)) {
       col_types[i] <- "numeric"
-      char_values[[i]] <- rep(NA_character_, length(col))
       num_values[[i]] <- as.double(col)
-      int_values[[i]] <- rep(NA_integer_, length(col))
-      lgl_values[[i]] <- rep(NA, length(col))
     } else if (is.logical(col)) {
       col_types[i] <- "logical"
-      char_values[[i]] <- rep(NA_character_, length(col))
-      num_values[[i]] <- rep(NA_real_, length(col))
-      int_values[[i]] <- rep(NA_integer_, length(col))
       lgl_values[[i]] <- col
     } else {
-      # Coerce to character
       col_types[i] <- "character"
       char_values[[i]] <- as.character(col)
-      num_values[[i]] <- rep(NA_real_, length(col))
-      int_values[[i]] <- rep(NA_integer_, length(col))
-      lgl_values[[i]] <- rep(NA, length(col))
     }
   }
 

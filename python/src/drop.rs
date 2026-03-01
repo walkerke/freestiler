@@ -1,19 +1,4 @@
-use crate::tiler::{Feature, Geometry, geometry_bbox};
-
-/// Compute Morton code (Z-order curve) for spatial ordering.
-/// Maps (x, y) in [0, 65535] to a 1D index with good spatial locality.
-fn morton_code(x: u32, y: u32) -> u64 {
-    fn spread_bits(v: u32) -> u64 {
-        let mut v = v as u64;
-        v = (v | (v << 16)) & 0x0000FFFF0000FFFF;
-        v = (v | (v << 8)) & 0x00FF00FF00FF00FF;
-        v = (v | (v << 4)) & 0x0F0F0F0F0F0F0F0F;
-        v = (v | (v << 2)) & 0x3333333333333333;
-        v = (v | (v << 1)) & 0x5555555555555555;
-        v
-    }
-    spread_bits(x) | (spread_bits(y) << 1)
-}
+use crate::tiler::{Feature, Geometry, geometry_bbox, morton_code};
 
 /// Compute Morton-code spatial indices for point features.
 /// Returns (original_feature_index, morton_code) pairs sorted by morton code.

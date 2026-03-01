@@ -1,7 +1,6 @@
 use pyo3::prelude::*;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use geozero::wkb::Wkb;
@@ -286,7 +285,7 @@ fn update_bounds(
 
 #[pyfunction]
 #[pyo3(signature = (layers, output_path, tile_format, min_zoom, max_zoom,
-    do_simplify, generate_ids, quiet, drop_rate, cluster_distance,
+    base_zoom, do_simplify, generate_ids, quiet, drop_rate, cluster_distance,
     cluster_maxzoom, do_coalesce))]
 fn _freestile(
     py: Python<'_>,
@@ -295,6 +294,7 @@ fn _freestile(
     tile_format: &str,
     min_zoom: u8,
     max_zoom: u8,
+    base_zoom: i32,
     do_simplify: bool,
     generate_ids: bool,
     quiet: bool,
@@ -476,13 +476,18 @@ fn _freestile(
                 })
                 .collect();
 
-            // Compute drop mask (not for clustered features)
-            let drop_mask = if use_drop && !using_clusters {
+            // Compute drop mask (not for clustered features, not at or above base_zoom)
+            // base_z defaults to each layer's own max_zoom (not global) for correct
+            // multi-layer behavior — a layer ending at z6 shouldn't drop at z5.
+            // Drop curve is computed relative to base_z, not max_zoom: at zoom 0 with
+            // base_zoom=4, threshold is drop_rate^(4-0), not drop_rate^(max-0).
+            let layer_base_z = if base_zoom < 0 { layer.max_zoom } else { base_zoom as u8 };
+            let drop_mask = if use_drop && !using_clusters && zoom < layer_base_z {
                 Some(drop_mod::compute_drop_mask(
                     features,
                     &spatial_indices[li],
                     zoom,
-                    max_z,
+                    layer_base_z,
                     drop_rate,
                     pixel_deg,
                 ))
@@ -522,8 +527,6 @@ fn _freestile(
             );
         }
 
-        let dropped_count = AtomicUsize::new(0);
-
         // Process tiles in parallel
         let tile_coords: Vec<TileCoord> = all_coords.into_iter().collect();
         let zoom_tiles: Vec<(TileCoord, Vec<u8>)> = tile_coords
@@ -542,7 +545,6 @@ fn _freestile(
                                 // Check drop mask
                                 if let Some(ref mask) = al.drop_mask {
                                     if !mask[idx] {
-                                        dropped_count.fetch_add(1, Ordering::Relaxed);
                                         return None;
                                     }
                                 }
@@ -552,22 +554,6 @@ fn _freestile(
                                     Some(g) => g,
                                     None => &feature.geometry,
                                 };
-
-                                // Sub-pixel dropping for non-points (baseline filter)
-                                if zoom < max_z && al.drop_mask.is_none() {
-                                    if !matches!(
-                                        geom_to_process,
-                                        Geometry::Point(_) | Geometry::MultiPoint(_)
-                                    ) {
-                                        let bbox = tiler::geometry_bbox(geom_to_process);
-                                        let w = bbox.max().x - bbox.min().x;
-                                        let h = bbox.max().y - bbox.min().y;
-                                        if w < pixel_deg && h < pixel_deg {
-                                            dropped_count.fetch_add(1, Ordering::Relaxed);
-                                            return None;
-                                        }
-                                    }
-                                }
 
                                 // Clip to tile boundaries
                                 let clipped =
@@ -587,6 +573,20 @@ fn _freestile(
                                 })
                             })
                             .collect();
+
+                        // Sort features spatially (Morton curve) for better compression
+                        if tile_feats.len() > 1 {
+                            let tb = tiler::tile_bounds(&coord);
+                            let tw = tb.min().x;
+                            let te = tb.max().x;
+                            let ts = tb.min().y;
+                            let tn = tb.max().y;
+                            tile_feats.sort_by(|a, b| {
+                                let key_a = tiler::tile_morton_key(&a.geometry, tw, te, ts, tn);
+                                let key_b = tiler::tile_morton_key(&b.geometry, tw, te, ts, tn);
+                                key_a.cmp(&key_b).then(a.id.cmp(&b.id))
+                            });
+                        }
 
                         // Coalesce features within this tile/layer
                         if do_coalesce && !tile_feats.is_empty() {
@@ -628,25 +628,15 @@ fn _freestile(
             .collect();
 
         let n_encoded = zoom_tiles.len();
-        let n_dropped = dropped_count.load(Ordering::Relaxed);
         all_tiles.extend(zoom_tiles);
 
         if !quiet {
             let elapsed = zoom_start.elapsed().as_secs_f64();
-            if n_dropped > 0 {
-                eprintln!(
-                    "           {:>6} encoded, {} dropped ({:.1}s)",
-                    n_encoded,
-                    n_dropped,
-                    elapsed
-                );
-            } else {
-                eprintln!(
-                    "           {:>6} encoded ({:.1}s)",
-                    n_encoded,
-                    elapsed
-                );
-            }
+            eprintln!(
+                "           {:>6} encoded ({:.1}s)",
+                n_encoded,
+                elapsed
+            );
         }
     }
 

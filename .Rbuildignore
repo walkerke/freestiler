@@ -6,3 +6,8 @@
 ^src/rust/target$
 ^src/rust/vendor$
 ^python$
+\.pmtiles$
+^examples$
+^PYTHON_HANDOFF\.md$
+^demo_mapgl\.R$
+^\.DS_Store$

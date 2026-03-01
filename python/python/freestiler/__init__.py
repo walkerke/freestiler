@@ -21,6 +21,7 @@ def freestile(
     tile_format: str = "mlt",
     min_zoom: int = 0,
     max_zoom: int = 14,
+    base_zoom: int | None = None,
     drop_rate: float | None = None,
     cluster_distance: float | None = None,
     cluster_maxzoom: int | None = None,
@@ -49,6 +50,9 @@ def freestile(
         Minimum zoom level (default 0).
     max_zoom : int
         Maximum zoom level (default 14).
+    base_zoom : int, optional
+        Zoom level at and above which ALL features are kept (no dropping).
+        None defaults to each layer's max_zoom (like tippecanoe -B).
     drop_rate : float, optional
         Exponential drop rate for feature thinning. None disables.
     cluster_distance : float, optional
@@ -122,6 +126,7 @@ def freestile(
         tile_format=tile_format,
         min_zoom=min_zoom,
         max_zoom=max_zoom,
+        base_zoom=base_zoom if base_zoom is not None else -1,
         do_simplify=simplification,
         generate_ids=generate_ids,
         quiet=quiet,

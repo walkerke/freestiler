@@ -96,16 +96,66 @@ pub fn geometry_bbox(geom: &Geometry) -> Rect<f64> {
     }
 }
 
+/// Compute Morton code (Z-order curve) for spatial ordering.
+/// Maps (x, y) in [0, 65535] to a 1D index with good spatial locality.
+pub fn morton_code(x: u32, y: u32) -> u64 {
+    fn spread_bits(v: u32) -> u64 {
+        let mut v = v as u64;
+        v = (v | (v << 16)) & 0x0000FFFF0000FFFF;
+        v = (v | (v << 8)) & 0x00FF00FF00FF00FF;
+        v = (v | (v << 4)) & 0x0F0F0F0F0F0F0F0F;
+        v = (v | (v << 2)) & 0x3333333333333333;
+        v = (v | (v << 1)) & 0x5555555555555555;
+        v
+    }
+    spread_bits(x) | (spread_bits(y) << 1)
+}
+
+/// Compute a Morton key for a geometry within a tile's coordinate space.
+/// Uses the centroid of the geometry's bounding box, normalized to the tile bounds.
+/// Y is projected to Mercator space to match the tile encoder's coordinate transform.
+pub fn tile_morton_key(geom: &Geometry, west: f64, east: f64, south: f64, north: f64) -> u64 {
+    let bbox = geometry_bbox(geom);
+    let cx = ((bbox.min().x + bbox.max().x) / 2.0 - west) / (east - west);
+    // Normalize Y in Mercator space (matches lat_to_tile_coord in mlt.rs / mvt.rs)
+    let lat = (bbox.min().y + bbox.max().y) / 2.0;
+    let lat_merc = lat.to_radians().tan().asinh();
+    let south_merc = south.to_radians().tan().asinh();
+    let north_merc = north.to_radians().tan().asinh();
+    // Note: in tile space, north is y=0 and south is y=extent, so invert
+    let cy = (north_merc - lat_merc) / (north_merc - south_merc);
+    let ix = (cx * 65535.0).clamp(0.0, 65535.0) as u32;
+    let iy = (cy * 65535.0).clamp(0.0, 65535.0) as u32;
+    morton_code(ix, iy)
+}
+
+/// Buffer factor as a fraction of tile extent for tile assignment.
+/// Must match the BUFFER_FRACTION in clip.rs so features in the
+/// clip buffer zone are assigned to the tile.
+const ASSIGN_BUFFER_FRACTION: f64 = 0.05;
+
 /// Assign features to tiles using optional geometry overrides for bbox calculation.
 /// When `geom_overrides[i]` is `Some(geom)`, uses that geometry's bbox instead of
 /// the feature's original geometry. This allows using pre-simplified geometries
 /// (e.g. VW-simplified lines) for tighter tile assignment.
+///
+/// Features are assigned using buffered tile bounds so that features in the
+/// clip buffer zone are included — preventing seams at tile boundaries.
 pub fn assign_features_to_tiles_with_geoms(
     features: &[Feature],
     geom_overrides: &[Option<Geometry>],
     zoom: u8,
 ) -> HashMap<TileCoord, Vec<usize>> {
     let mut tile_map: HashMap<TileCoord, Vec<usize>> = HashMap::new();
+    let max_tiles = (1u64 << zoom) as u32;
+
+    // Precompute the buffer in degrees of longitude and latitude
+    // at this zoom level (one tile's worth × buffer fraction)
+    let tile_width_deg = 360.0 / (1u64 << zoom) as f64;
+    let buf_x = tile_width_deg * ASSIGN_BUFFER_FRACTION;
+    // For latitude, use an approximate buffer based on mid-latitude tile height
+    // (conservative: use equatorial tile height which is the largest)
+    let buf_y = tile_width_deg * ASSIGN_BUFFER_FRACTION;
 
     for (idx, feature) in features.iter().enumerate() {
         let bbox = match &geom_overrides[idx] {
@@ -113,13 +163,14 @@ pub fn assign_features_to_tiles_with_geoms(
             None => geometry_bbox(&feature.geometry),
         };
 
-        let min_x = lon_to_tile_x(bbox.min().x, zoom);
-        let max_x = lon_to_tile_x(bbox.max().x, zoom);
-        let min_y = lat_to_tile_y(bbox.max().y, zoom); // lat/y inverted
-        let max_y = lat_to_tile_y(bbox.min().y, zoom);
+        // Expand the feature bbox by the buffer amount, then find tiles
+        let min_x = lon_to_tile_x((bbox.min().x - buf_x).max(-180.0), zoom);
+        let max_x = lon_to_tile_x((bbox.max().x + buf_x).min(180.0), zoom);
+        let min_y = lat_to_tile_y((bbox.max().y + buf_y).min(85.051), zoom); // lat/y inverted
+        let max_y = lat_to_tile_y((bbox.min().y - buf_y).max(-85.051), zoom);
 
-        for x in min_x..=max_x {
-            for y in min_y..=max_y {
+        for x in min_x..=max_x.min(max_tiles - 1) {
+            for y in min_y..=max_y.min(max_tiles - 1) {
                 tile_map
                     .entry(TileCoord { z: zoom, x, y })
                     .or_default()

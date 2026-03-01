@@ -82,6 +82,28 @@ def test_no_simplification(tmp_path):
     assert output.stat().st_size > 0
 
 
+def test_base_zoom(tmp_path):
+    """base_zoom should control when feature dropping stops."""
+    polys = gpd.GeoDataFrame(
+        {"name": [f"p{i}" for i in range(30)]},
+        geometry=[box(-80 + i * 0.3, 35, -79.7 + i * 0.3, 35.3) for i in range(30)],
+        crs="EPSG:4326",
+    )
+    # With base_zoom=6, all features should be kept at zoom 6+
+    output = tmp_path / "test_bz.pmtiles"
+    freestile(
+        polys,
+        output,
+        drop_rate=2.5,
+        base_zoom=6,
+        tile_format="mvt",
+        max_zoom=8,
+        quiet=True,
+    )
+    assert output.exists()
+    assert output.stat().st_size > 0
+
+
 def test_no_ids(tmp_path):
     """generate_ids=False should work."""
     polys = gpd.GeoDataFrame(

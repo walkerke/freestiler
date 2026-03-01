@@ -14,18 +14,30 @@ library(sf)
 # Block groups — 242K polygons, MLT format
 if (!file.exists("/tmp/us_bgs_mlt.pmtiles")) {
   bgs <- tigris::block_groups(cb = TRUE, year = 2023)
-  freestile(bgs, "/tmp/us_bgs_mlt.pmtiles",
-            layer_name = "bgs", tile_format = "mlt",
-            min_zoom = 4, max_zoom = 12)
+  freestile(
+    bgs,
+    "/tmp/us_bgs_mlt.pmtiles",
+    layer_name = "bgs",
+    tile_format = "mlt",
+    min_zoom = 4,
+    max_zoom = 12
+  )
 }
 
 # Counties with RAC data — polygon choropleth
 if (!file.exists("/tmp/counties_mlt.pmtiles")) {
-  counties <- st_read("~/Dropbox/kwalkerdata/mapgl-examples/us_counties_rac.gpkg",
-                       quiet = TRUE)
-  freestile(counties, "/tmp/counties_mlt.pmtiles",
-            layer_name = "counties", tile_format = "mlt",
-            min_zoom = 2, max_zoom = 10)
+  counties <- st_read(
+    "~/Dropbox/kwalkerdata/mapgl-examples/us_counties_rac.gpkg",
+    quiet = TRUE
+  )
+  freestile(
+    counties,
+    "/tmp/counties_mlt.pmtiles",
+    layer_name = "counties",
+    tile_format = "mlt",
+    min_zoom = 2,
+    max_zoom = 10
+  )
 }
 
 # --- 2. Block groups — fill + hover -----------------------------------------
@@ -62,7 +74,7 @@ maplibre(
 # --- 3. Counties choropleth -------------------------------------------------
 
 # maplibre(
-#   style = maptiler_style("dataviz"),
+#   style = maptiler_style("dataviz-light"),
 #   bounds = c(-125, 24, -66, 50)
 # ) |>
 #   add_pmtiles_source(
