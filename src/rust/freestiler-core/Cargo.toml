@@ -3,6 +3,11 @@ name = "freestiler-core"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+geoparquet = ["dep:parquet", "dep:arrow-array", "dep:arrow-schema", "dep:geozero"]
+duckdb = ["dep:duckdb", "dep:geozero"]
+
 [dependencies]
 # Geometry operations
 geo = "0.29"
@@ -26,6 +31,17 @@ serde_json = "1"
 
 # Parallel tile encoding
 rayon = "1.10"
+
+# GeoParquet file input (optional)
+parquet = { version = "57", optional = true, default-features = false, features = ["arrow", "snap"] }
+arrow-array = { version = "57", optional = true }
+arrow-schema = { version = "57", optional = true }
+
+# WKB geometry parsing (shared by geoparquet and duckdb features)
+geozero = { version = "0.13", optional = true, features = ["with-wkb", "with-geo"] }
+
+# DuckDB file input (optional)
+duckdb = { version = "1.2", optional = true, features = ["bundled"] }
 
 [dev-dependencies]
 # MapLibre reference MLT decoder — used for conformance fixture tests

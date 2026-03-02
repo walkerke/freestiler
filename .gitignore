@@ -18,3 +18,8 @@ __pycache__/
 docs/
 .DS_Store
 *.pmtiles
+*.Rcheck/
+*.tar.gz
+src/rust/freestiler-core/target/
+python/python/freestiler/*.so
+python/python/freestiler/*.dSYM/

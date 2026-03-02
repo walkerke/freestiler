@@ -12,7 +12,9 @@ NULL
 
 #' Create vector tiles from spatial data (multi-layer support)
 #'
-#' @param layers List of layer lists
+#' @param layers List of layer lists, each containing: name, geometries, geom_types,
+#'   prop_names, prop_types, prop_char_values, prop_num_values, prop_int_values,
+#'   prop_lgl_values, min_zoom, max_zoom
 #' @param output_path Path for output .pmtiles file
 #' @param tile_format "mvt" or "mlt"
 #' @param global_min_zoom Minimum zoom level
@@ -24,9 +26,42 @@ NULL
 #' @param cluster_distance Pixel distance for clustering (negative = off)
 #' @param cluster_maxzoom Max zoom for clustering (negative = use max_zoom - 1)
 #' @param do_coalesce Whether to coalesce features with same attributes
-#' @return The output file path or an error message
 #' @keywords internal
 rust_freestile <- function(layers, output_path, tile_format, global_min_zoom, global_max_zoom, base_zoom, do_simplify, generate_ids, quiet, drop_rate, cluster_distance, cluster_maxzoom, do_coalesce) .Call(wrap__rust_freestile, layers, output_path, tile_format, global_min_zoom, global_max_zoom, base_zoom, do_simplify, generate_ids, quiet, drop_rate, cluster_distance, cluster_maxzoom, do_coalesce)
+
+#' Create tiles from a GeoParquet file (requires geoparquet feature)
+#' @param input_path Path to the GeoParquet file
+#' @param output_path Path for output .pmtiles file
+#' @param layer_name Layer name
+#' @param tile_format "mvt" or "mlt"
+#' @param min_zoom Minimum zoom level
+#' @param max_zoom Maximum zoom level
+#' @param base_zoom Base zoom level (negative = use max_zoom)
+#' @param do_simplify Whether to simplify geometries
+#' @param drop_rate Exponential drop rate (negative = off)
+#' @param cluster_distance Pixel distance for clustering (negative = off)
+#' @param cluster_maxzoom Max zoom for clustering (negative = use max_zoom - 1)
+#' @param do_coalesce Whether to coalesce features
+#' @param quiet Whether to suppress progress
+#' @keywords internal
+rust_freestile_file <- function(input_path, output_path, layer_name, tile_format, min_zoom, max_zoom, base_zoom, do_simplify, drop_rate, cluster_distance, cluster_maxzoom, do_coalesce, quiet) .Call(wrap__rust_freestile_file, input_path, output_path, layer_name, tile_format, min_zoom, max_zoom, base_zoom, do_simplify, drop_rate, cluster_distance, cluster_maxzoom, do_coalesce, quiet)
+
+#' Create tiles from a file via DuckDB spatial (requires duckdb feature)
+#' @param input_path Path to the spatial file
+#' @param output_path Path for output .pmtiles file
+#' @param layer_name Layer name
+#' @param tile_format "mvt" or "mlt"
+#' @param min_zoom Minimum zoom level
+#' @param max_zoom Maximum zoom level
+#' @param base_zoom Base zoom level (negative = use max_zoom)
+#' @param do_simplify Whether to simplify geometries
+#' @param drop_rate Exponential drop rate (negative = off)
+#' @param cluster_distance Pixel distance for clustering (negative = off)
+#' @param cluster_maxzoom Max zoom for clustering (negative = use max_zoom - 1)
+#' @param do_coalesce Whether to coalesce features
+#' @param quiet Whether to suppress progress
+#' @keywords internal
+rust_freestile_duckdb <- function(input_path, output_path, layer_name, tile_format, min_zoom, max_zoom, base_zoom, do_simplify, drop_rate, cluster_distance, cluster_maxzoom, do_coalesce, quiet) .Call(wrap__rust_freestile_duckdb, input_path, output_path, layer_name, tile_format, min_zoom, max_zoom, base_zoom, do_simplify, drop_rate, cluster_distance, cluster_maxzoom, do_coalesce, quiet)
 
 
 # nolint end

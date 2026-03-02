@@ -320,11 +320,74 @@ fn _freestile(
 }
 
 // ---------------------------------------------------------------------------
+// Direct file input (GeoParquet)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "geoparquet")]
+#[pyfunction]
+#[pyo3(signature = (input_path, output_path, layer_name, tile_format, min_zoom,
+    max_zoom, base_zoom, do_simplify, quiet, drop_rate, cluster_distance,
+    cluster_maxzoom, do_coalesce))]
+fn _freestile_file(
+    input_path: &str,
+    output_path: &str,
+    layer_name: &str,
+    tile_format: &str,
+    min_zoom: u8,
+    max_zoom: u8,
+    base_zoom: i32,
+    do_simplify: bool,
+    quiet: bool,
+    drop_rate: f64,
+    cluster_distance: f64,
+    cluster_maxzoom: i32,
+    do_coalesce: bool,
+) -> PyResult<String> {
+    let reporter: Box<dyn ProgressReporter> = if quiet {
+        Box::new(engine::SilentReporter)
+    } else {
+        Box::new(PyReporter)
+    };
+
+    let layers = freestiler_core::file_input::parquet_to_layers(
+        input_path, layer_name, min_zoom, max_zoom,
+    )
+    .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))?;
+
+    if !quiet {
+        let total: usize = layers.iter().map(|l| l.features.len()).sum();
+        reporter.report(&format!("  Read {} features from {}", total, input_path));
+    }
+
+    let config = TileConfig {
+        tile_format: match tile_format {
+            "mlt" => TileFormat::Mlt,
+            _ => TileFormat::Mvt,
+        },
+        min_zoom,
+        max_zoom,
+        base_zoom: if base_zoom < 0 { None } else { Some(base_zoom as u8) },
+        simplification: do_simplify,
+        drop_rate: if drop_rate > 0.0 { Some(drop_rate) } else { None },
+        cluster_distance: if cluster_distance > 0.0 { Some(cluster_distance) } else { None },
+        cluster_maxzoom: if cluster_maxzoom >= 0 { Some(cluster_maxzoom as u8) } else { None },
+        coalesce: do_coalesce,
+    };
+
+    match engine::generate_pmtiles(&layers, output_path, &config, reporter.as_ref()) {
+        Ok(()) => Ok(output_path.to_string()),
+        Err(e) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e)),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // PyO3 module registration
 // ---------------------------------------------------------------------------
 
 #[pymodule]
 fn _freestiler(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(_freestile, m)?)?;
+    #[cfg(feature = "geoparquet")]
+    m.add_function(wrap_pyfunction!(_freestile_file, m)?)?;
     Ok(())
 }

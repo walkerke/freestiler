@@ -7,6 +7,11 @@ edition = "2021"
 crate-type = ["staticlib"]
 name = "freestiler"
 
+[features]
+default = []
+geoparquet = ["freestiler-core/geoparquet"]
+duckdb = ["freestiler-core/duckdb"]
+
 [dependencies]
 extendr-api = "0.8"
 freestiler-core = { path = "freestiler-core" }

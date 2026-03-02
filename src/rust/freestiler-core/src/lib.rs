@@ -3,6 +3,8 @@ pub mod cluster;
 pub mod coalesce;
 pub mod drop;
 pub mod engine;
+#[cfg(any(feature = "geoparquet", feature = "duckdb"))]
+pub mod file_input;
 pub mod mlt;
 pub mod mvt;
 pub mod pmtiles_writer;

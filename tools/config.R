@@ -70,6 +70,24 @@ cfg <- if (is_debug) "debug" else "release"
   ""
 )
 
+# Optional Cargo features (never enabled for CRAN)
+features <- character(0)
+if (is_not_cran) {
+  if (Sys.getenv("FREESTILER_GEOPARQUET") != "") {
+    features <- c(features, "geoparquet")
+    message("Enabling GeoParquet feature.")
+  }
+  if (Sys.getenv("FREESTILER_DUCKDB") != "") {
+    features <- c(features, "duckdb")
+    message("Enabling DuckDB feature.")
+  }
+}
+.features <- if (length(features) > 0) {
+  paste0("--features ", paste(features, collapse = ","))
+} else {
+  ""
+}
+
 # read in the Makevars.in file checking
 is_windows <- .Platform[["OS.type"]] == "windows"
 
@@ -102,7 +120,8 @@ new_txt <- gsub("@CRAN_FLAGS@", .cran_flags, mv_txt) |>
   gsub("@CLEAN_TARGET@", .clean_targets, x = _) |>
   gsub("@LIBDIR@", .libdir, x = _) |>
   gsub("@TARGET@", .target, x = _) |>
-  gsub("@PANIC_EXPORTS@", .panic_exports, x = _)
+  gsub("@PANIC_EXPORTS@", .panic_exports, x = _) |>
+  gsub("@FEATURES@", .features, x = _)
 
 message("Writing `", mv_ofp, "`.")
 con <- file(mv_ofp, open = "wb")

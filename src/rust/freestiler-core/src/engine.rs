@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use crate::pmtiles_writer::TileFormat;
-use crate::tiler::{Feature, Geometry, LayerData, PropertyValue, TileCoord};
+use crate::tiler::{Feature, Geometry, LayerData, TileCoord};
 use crate::{clip, cluster, coalesce, drop, mlt, mvt, pmtiles_writer, simplify, tiler};
 
 /// Configuration for tile generation
