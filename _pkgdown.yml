@@ -2,19 +2,19 @@ url: https://walker-data.com/freestiler/
 template:
   bootstrap: 5
   bslib:
-    bg: "#ffffff"
-    fg: "#1a2d40"
-    primary: "#00897b"
-    secondary: "#26a69a"
-    link-color: "#00897b"
-    code-color: "#00897b"
+    bg: "#f9f7f3"
+    fg: "#2b4a2b"
+    primary: "#355e3b"
+    secondary: "#6b8e6b"
+    link-color: "#2e8cb8"
+    code-color: "#355e3b"
 
 home:
   title: freestiler
   description: Rust-powered vector tile engine for R and Python
 
 navbar:
-  bg: "#1a2d40"
+  bg: "#2b4a2b"
   type: dark
   structure:
     left:  [intro, reference, articles]
@@ -36,6 +36,8 @@ reference:
   desc: Create PMTiles archives from spatial data
   contents:
   - freestile
+  - freestile_file
+  - freestile_query
   - freestile_layer
 
 - title: internal

@@ -19,7 +19,8 @@ freestile_query(
   coalesce = FALSE,
   simplification = TRUE,
   overwrite = TRUE,
-  quiet = FALSE
+  quiet = FALSE,
+  source_crs = NULL
 )
 }
 \arguments{
@@ -58,15 +59,29 @@ grid (default TRUE).}
 \item{overwrite}{Logical. Whether to overwrite existing output (default TRUE).}
 
 \item{quiet}{Logical. Whether to suppress progress (default FALSE).}
+
+\item{source_crs}{Character or NULL. CRS of the geometry returned by
+\code{query}, for example \code{"EPSG:4326"} or \code{"EPSG:4267"}. Used only by the R
+\code{duckdb} fallback; ignored by the Rust DuckDB backend.}
 }
 \value{
 The output file path (invisibly).
 }
 \description{
 Executes a SQL query via DuckDB's spatial extension and pipes the results
-directly into the Rust tiling engine. Data never touches R memory, making
-this ideal for large datasets. Requires freestiler to be compiled with
-\code{FREESTILER_DUCKDB=true}.
+into the tiling engine. Uses the Rust DuckDB backend if compiled
+(\code{FREESTILER_DUCKDB=true}), or falls back to the R \code{duckdb} package.
+Control backend selection with
+\code{options(freestiler.duckdb_backend = "auto"|"rust"|"r")}.
+}
+\details{
+When using the R fallback, \code{source_crs} must be supplied explicitly so the
+query result can be interpreted or reprojected correctly. Pass
+\code{"EPSG:4326"} if the SQL already returns WGS84 geometry, or the source CRS
+string (for example \code{"EPSG:4267"}) to have DuckDB reproject to WGS84 before
+tiling. For file-based input where the CRS is embedded in the file, use
+\code{\link[=freestile_file]{freestile_file()}} with \code{engine = "duckdb"} instead, which auto-detects the
+source CRS.
 }
 \examples{
 \dontrun{

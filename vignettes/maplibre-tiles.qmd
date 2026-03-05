@@ -121,18 +121,6 @@ Key performance features:
 - **Sub-pixel fast paths** -- features smaller than one pixel at a given zoom
   level are skipped, dramatically reducing work at low zooms.
 
-## Performance comparison
-
-freestiler outperforms tippecanoe for in-R workflows because it avoids the
-GeoJSON serialization step:
-
-| Dataset | freestiler | tippecanoe | Speedup |
-|---------|-----------|------------|---------|
-| Block groups (242K polys, z4-12) | 8.3s | 68.3s | ~8x |
-
-The tippecanoe time includes GeoJSON export from R, which dominates the total
-time. freestiler processes sf objects directly in memory.
-
 ## MLT ecosystem status
 
 MLT is a new format (January 2026). Current ecosystem support:

@@ -1,4 +1,4 @@
-# freestiler
+# freestiler <a href="https://walker-data.com/freestiler/"><img src="man/figures/logo.png" align="right" height="139" alt="freestiler logo" /></a>
 
 <!-- badges: start -->
 <!-- badges: end -->

@@ -10,14 +10,14 @@
 ^python
 \.pmtiles$
 ^examples$
-^PYTHON_HANDOFF\.md$
+^_PYTHON_HANDOFF\.md$
 ^demo_mapgl\.R$
 ^\.DS_Store$
 ^_pkgdown\.yml$
 ^docs$
 ^pkgdown$
 ^\.github$
-^CLAUDE\.md$
+^_CLAUDE\.md$
 ^\.claude$
 ^mlt-spec\.md$
 ^README\.md$

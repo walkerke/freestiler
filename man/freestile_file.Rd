@@ -63,9 +63,12 @@ The output file path (invisibly).
 }
 \description{
 Reads a GeoParquet, GeoPackage, Shapefile, or other spatial file directly
-into the Rust tiling engine, bypassing R's sf layer. Requires freestiler to
-be compiled with optional features (\code{FREESTILER_GEOPARQUET=true} or
-\code{FREESTILER_DUCKDB=true}).
+into the tiling engine. The GeoParquet engine requires compilation with
+\code{FREESTILER_GEOPARQUET=true}. The DuckDB engine uses the Rust DuckDB backend
+if compiled (\code{FREESTILER_DUCKDB=true}), or falls back to the R \code{duckdb}
+package (which reads the file via DuckDB's \code{ST_Read()}, auto-detects the
+source CRS via \code{ST_Read_Meta()}, and reprojects to WGS84). Control backend
+selection with \code{options(freestiler.duckdb_backend = "auto"|"rust"|"r")}.
 }
 \examples{
 \dontrun{
