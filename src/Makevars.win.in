@@ -31,6 +31,10 @@ $(STATLIB):
 		cp rust/vendor-config.toml $(CARGOTMP)/config.toml; \
 	fi
 
+	if [ -d ./vendor ]; then \
+		find ./vendor -type f \( -name '._*' -o -name '.DS_Store' \) -delete; \
+	fi
+
 	# Build the project using Cargo with additional flags
 	export CARGO_HOME=$(CARGOTMP) && \
 	export LIBRARY_PATH="$(LIBRARY_PATH);$(CURDIR)/$(TARGET_DIR)/libgcc_mock" && \
