@@ -1,7 +1,7 @@
 ---
-title: "Getting Started with freestiler"
+title: "Getting Started"
 vignette: >
-  %\VignetteIndexEntry{Getting Started with freestiler}
+  %\VignetteIndexEntry{Getting Started}
   %\VignetteEngine{quarto::html}
   %\VignetteEncoding{UTF-8}
 ---
@@ -14,18 +14,22 @@ library(freestiler)
 
 ## Overview
 
-freestiler is a Rust-powered vector tile engine for R. It takes sf data frames
-and produces [PMTiles](https://github.com/protomaps/PMTiles) archives --- self-contained, single-file
-tilesets that can be served statically or viewed locally. The entire pipeline
-runs in-memory with zero external dependencies: no tippecanoe, no Java, no Go.
+freestiler is a Rust-powered vector tile engine for R and Python. It takes sf
+data frames or GeoDataFrames and produces
+[PMTiles](https://github.com/protomaps/PMTiles) archives -- self-contained,
+single-file tilesets that can be served statically or viewed locally. The entire
+pipeline runs in-memory with zero external dependencies: no tippecanoe, no Java,
+no Go.
 
 freestiler supports two tile formats:
 
-- **MLT (MapLibre Tiles)** --- the default. A next-generation columnar binary
+- **MLT (MapLibre Tiles)** -- the default. A next-generation columnar binary
   format for efficient vector tile encoding.
-- **MVT (Mapbox Vector Tiles)** --- the widely supported protobuf-based format.
+- **MVT (Mapbox Vector Tiles)** -- the widely supported protobuf-based format.
 
 ## Installation
+
+### R
 
 Install from [r-universe](https://walkerke.r-universe.dev):
 
@@ -40,9 +44,23 @@ Or install the development version from GitHub:
 devtools::install_github("walkerke/freestiler")
 ```
 
+### Python
+
+Install from source (requires Rust toolchain):
+
+```bash
+cd python
+pip install -e .
+```
+
+See the [Python Setup](python.html) article for detailed installation
+instructions, virtual environment setup, and building with optional features.
+
 ## Creating your first tileset
 
-The main function is `freestile()`. Pass it an sf data frame and an output path:
+The main function is `freestile()`. Pass it spatial data and an output path.
+
+**R**
 
 ```{r}
 #| eval: false
@@ -60,12 +78,29 @@ Creating MLT tiles (zoom 0-14) for 100 features across 1 layer...
 Created nc_counties.pmtiles (65.2 KB)
 ```
 
-This creates a PMTiles archive with MLT-encoded tiles at zoom levels 0 through 14.
+**Python**
 
-## Viewing tiles with mapgl
+```python
+import geopandas as gpd
+from freestiler import freestile
+
+gdf = gpd.read_file("nc.shp")
+
+freestile(gdf, "nc_counties.pmtiles", layer_name="counties")
+```
+
+```
+Creating MLT tiles (zoom 0-14) for 100 features across 1 layer...
+  Tiling layer 'counties' (zoom 0-14)...
+Created nc_counties.pmtiles (65.2 KB)
+```
+
+## Viewing tiles
+
+### R
 
 Use the [mapgl](https://walker-data.com/mapgl/) package to view your tileset
-directly in R:
+directly in R. mapgl supports both MLT and MVT tiles:
 
 ```{r}
 #| eval: false
@@ -92,21 +127,70 @@ maplibre() |>
   )
 ```
 
+### Python
+
+Python viewers like py-maplibregl and leafmap currently bundle MapLibre GL JS
+versions earlier than 5.17, which means they support MVT but not yet MLT. For
+Python viewing, create tiles with `tile_format="mvt"`:
+
+```python
+freestile(gdf, "nc_mvt.pmtiles", layer_name="counties", tile_format="mvt")
+```
+
+Then view with py-maplibregl:
+
+```python
+from maplibre import Map, MapOptions
+from maplibre.sources import VectorTileSource
+from maplibre.layers import Layer, LayerType
+
+source = VectorTileSource(url="pmtiles://nc_mvt.pmtiles")
+
+layer = Layer(
+    type=LayerType.FILL,
+    id="counties",
+    source="counties-source",
+    source_layer="counties",
+    paint={"fill-color": "#00897b", "fill-opacity": 0.5}
+)
+
+m = Map(MapOptions(center=[-79.5, 35.5], zoom=6))
+m.add_source("counties-source", source)
+m.add_layer(layer)
+m
+```
+
+MLT viewing in Python will work once these viewers upgrade to MapLibre GL JS
+5.17+. In the meantime, you can view MLT tiles in the browser with
+[MapLibre GL JS](https://maplibre.org/) directly.
+
 ## MLT vs MVT format
 
 The default format is MLT (MapLibre Tiles). To use MVT instead:
+
+**R**
+
 ```{r}
 #| eval: false
 freestile(nc, "nc_mvt.pmtiles", layer_name = "counties", tile_format = "mvt")
 ```
 
+**Python**
+
+```python
+freestile(gdf, "nc_mvt.pmtiles", layer_name="counties", tile_format="mvt")
+```
+
 MLT is a columnar encoding that can be more compact than MVT, especially for
 polygon-heavy datasets. MVT is the universal fallback supported by all mapping
-libraries. Use MVT when maximum compatibility is needed.
+libraries. Use MVT when maximum viewer compatibility is needed -- particularly
+for Python viewers today.
 
 ## Controlling zoom levels
 
-The `min_zoom` and `max_zoom` parameters control the zoom range:
+The `min_zoom` and `max_zoom` parameters control the zoom range.
+
+**R**
 
 ```{r}
 #| eval: false
@@ -117,36 +201,114 @@ freestile(nc, "nc_z4_10.pmtiles",
 )
 ```
 
+**Python**
+
+```python
+freestile(gdf, "nc_z4_10.pmtiles",
+    layer_name="counties",
+    min_zoom=4,
+    max_zoom=10
+)
+```
+
 ## Feature dropping with drop_rate
 
 For large datasets, `drop_rate` provides exponential feature thinning at lower
 zoom levels. Points are thinned using spatial ordering (Morton curve) to
-maintain even coverage; polygons and lines are thinned by area:
+maintain even coverage; polygons and lines are thinned by area.
+
+The `base_zoom` parameter controls the zoom level above which all features are
+present. Below `base_zoom`, features are progressively thinned. By default,
+`base_zoom` equals `max_zoom`.
+
+**R**
 
 ```{r}
 #| eval: false
 freestile(nc, "nc_dropping.pmtiles",
-  layer_name = "counties",
-  drop_rate = 2.5
-)
-```
-
-The `base_zoom` parameter controls the zoom level above which all features are
-present. Below `base_zoom`, features are progressively thinned. By default,
-`base_zoom` equals `max_zoom`:
-
-```{r}
-#| eval: false
-freestile(nc, "nc_basezoom.pmtiles",
   layer_name = "counties",
   drop_rate = 2.5,
   base_zoom = 10
 )
 ```
 
+**Python**
+
+```python
+freestile(gdf, "nc_dropping.pmtiles",
+    layer_name="counties",
+    drop_rate=2.5,
+    base_zoom=10
+)
+```
+
+## Direct file input
+
+Tile spatial files directly without loading them into R or Python first.
+Supports GeoParquet, GeoPackage, Shapefile, and other formats readable by
+DuckDB's spatial extension.
+
+**R**
+
+```{r}
+#| eval: false
+# GeoParquet (uses the geoparquet engine)
+freestile_file("census_blocks.parquet", "blocks.pmtiles")
+
+# GeoPackage, Shapefile, or other formats (uses the DuckDB engine)
+freestile_file("counties.gpkg", "counties.pmtiles", engine = "duckdb")
+```
+
+**Python**
+
+```python
+from freestiler import freestile_file
+
+freestile_file("census_blocks.parquet", "blocks.pmtiles")
+```
+
+## SQL queries with DuckDB
+
+Run a SQL query through DuckDB's spatial extension and pipe the results directly
+into the tiling engine. Filter, join, and transform your data with SQL before
+tiling.
+
+**R**
+
+```{r}
+#| eval: false
+freestile_query(
+  "SELECT * FROM ST_Read('counties.shp') WHERE pop > 50000",
+  "large_counties.pmtiles"
+)
+
+freestile_query(
+  "SELECT * FROM read_parquet('blocks.parquet') WHERE state = 'NC'",
+  "nc_blocks.pmtiles"
+)
+```
+
+**Python**
+
+```python
+from freestiler import freestile_query
+
+freestile_query(
+    "SELECT * FROM ST_Read('counties.shp') WHERE pop > 50000",
+    "large_counties.pmtiles"
+)
+
+freestile_query(
+    "SELECT * FROM read_parquet('blocks.parquet') WHERE state = 'NC'",
+    "nc_blocks.pmtiles"
+)
+```
+
 ## Multi-layer tiles
 
-Pass a named list to create multi-layer tilesets:
+Pass a named list (R) or dictionary (Python) to create multi-layer tilesets.
+
+**R**
 
 ```{r}
 #| eval: false
@@ -171,10 +333,24 @@ freestile(
 )
 ```
 
+**Python**
+
+```python
+centroids = gdf.copy()
+centroids.geometry = gdf.geometry.centroid
+
+freestile(
+    {"counties": gdf, "centroids": centroids},
+    "nc_layers.pmtiles"
+)
+```
+
 ## Point clustering
 
 For point layers, `cluster_distance` merges nearby points into clusters with
-a `point_count` attribute:
+a `point_count` attribute.
+
+**R**
 
 ```{r}
 #| eval: false
@@ -185,16 +361,37 @@ freestile(pts, "nc_clustered.pmtiles",
 )
 ```
 
+**Python**
+
+```python
+freestile(centroids, "nc_clustered.pmtiles",
+    layer_name="centroids",
+    cluster_distance=50,
+    cluster_maxzoom=8
+)
+```
+
 ## Feature coalescing
 
 The `coalesce` parameter merges features with identical attributes within each
 tile. Lines sharing endpoints are joined; polygons are grouped into
-MultiPolygons:
+MultiPolygons.
+
+**R**
 
 ```{r}
 #| eval: false
 freestile(nc, "nc_coalesced.pmtiles",
   layer_name = "counties",
   coalesce = TRUE
+)
+```
+
+**Python**
+
+```python
+freestile(gdf, "nc_coalesced.pmtiles",
+    layer_name="counties",
+    coalesce=True
 )
 ```

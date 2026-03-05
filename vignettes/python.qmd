@@ -1,7 +1,7 @@
 ---
-title: "Python Companion"
+title: "Python Setup & Viewing"
 vignette: >
-  %\VignetteIndexEntry{Python Companion}
+  %\VignetteIndexEntry{Python Setup & Viewing}
   %\VignetteEngine{quarto::html}
   %\VignetteEncoding{UTF-8}
 ---
@@ -14,127 +14,99 @@ library(freestiler)
 
 ## Overview
 
-freestiler has a Python companion package that shares the same Rust engine. It
-accepts GeoDataFrames (via GeoPandas) and produces the same PMTiles output. The
-Python package lives in the `python/` subdirectory of the freestiler repository.
+freestiler's Python package shares the same Rust engine as the R package. This
+article covers Python-specific setup: installation, virtual environments,
+building with optional features, and viewing tiles.
+
+For usage examples (basic tiling, multi-layer, feature dropping, clustering,
+coalescing, file input, SQL queries), see the
+[Getting Started](getting-started.html) article, which covers R and Python
+side-by-side.
+
+## Prerequisites
+
+You need a Rust toolchain installed. If you don't have one:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+You also need Python 3.9+ and pip.
 
 ## Installation
 
-Install from source using pip (requires Rust toolchain):
+### Virtual environment setup
 
 ```bash
 cd python
+python3 -m venv .venv
+source .venv/bin/activate   # On Windows: .venv\Scripts\activate
+```
+
+### Install from source
+
+```bash
 pip install -e .
 ```
 
-Or build with maturin directly:
+This builds the Rust extension and installs the package in editable mode.
+GeoPandas and its dependencies are installed automatically.
+
+### Build with maturin
+
+For development builds with maturin directly:
 
 ```bash
-cd python
-maturin develop --release
+pip install maturin
+python3 -m maturin develop --release
 ```
 
-## Basic usage
+## Optional features
 
-```python
-import geopandas as gpd
-from freestiler import freestile
+freestiler supports optional Rust features for direct file input and DuckDB
+queries. These require additional Rust dependencies and are not enabled by
+default.
 
-gdf = gpd.read_file("nc.shp")
+### GeoParquet support
 
-freestile(gdf, "nc_counties.pmtiles", layer_name="counties")
+Read GeoParquet files directly in Rust without going through GeoPandas:
+
+```bash
+FREESTILER_GEOPARQUET=1 pip install -e .
 ```
 
-```
-Creating MLT tiles (zoom 0-14) for 100 features across 1 layer...
-  Tiling layer 'counties' (zoom 0-14)...
-Created nc_counties.pmtiles (65.2 KB)
-```
+### DuckDB support
 
-## R vs Python API
+Run SQL queries through DuckDB's spatial extension:
 
-The Python API mirrors R closely, with Pythonic conventions:
-
-| Feature | R | Python |
-|---------|---|--------|
-| Input type | sf data frame | GeoDataFrame |
-| Multi-layer | Named list of sf objects | Dict of GeoDataFrames |
-| Default format | `"mlt"` | `"mlt"` |
-| Zoom range | `min_zoom = 0, max_zoom = 14` | `min_zoom=0, max_zoom=14` |
-| Feature dropping | `drop_rate = 2.5` | `drop_rate=2.5` |
-| Base zoom | `base_zoom = 10` | `base_zoom=10` |
-| Point clustering | `cluster_distance = 50` | `cluster_distance=50` |
-| Feature coalescing | `coalesce = TRUE` | `coalesce=True` |
-| Layer helper | `freestile_layer()` | (use dict directly) |
-
-## MVT output
-
-```python
-freestile(gdf, "nc_mvt.pmtiles",
-    layer_name="counties",
-    tile_format="mvt"
-)
+```bash
+FREESTILER_DUCKDB=1 pip install -e .
 ```
 
-## Multi-layer tiles
+### Both features
 
-Pass a dictionary mapping layer names to GeoDataFrames:
-
-```python
-import geopandas as gpd
-from freestiler import freestile
-
-counties = gpd.read_file("counties.shp")
-roads = gpd.read_file("roads.shp")
-
-freestile(
-    {"counties": counties, "roads": roads},
-    "layers.pmtiles"
-)
-```
-
-## Feature dropping and base_zoom
-
-```python
-freestile(gdf, "dropped.pmtiles",
-    layer_name="counties",
-    drop_rate=2.5,
-    base_zoom=10
-)
-```
-
-## Point clustering
-
-```python
-points = gpd.read_file("points.shp")
-
-freestile(points, "clustered.pmtiles",
-    layer_name="points",
-    cluster_distance=50,
-    cluster_maxzoom=8
-)
-```
-
-## Feature coalescing
-
-```python
-freestile(gdf, "coalesced.pmtiles",
-    layer_name="counties",
-    coalesce=True
-)
+```bash
+FREESTILER_GEOPARQUET=1 FREESTILER_DUCKDB=1 pip install -e .
 ```
 
 ## Viewing tiles
 
-### With maplibre-py
+### py-maplibregl (MVT)
+
+py-maplibregl bundles MapLibre GL JS 5.3, which supports MVT but not yet MLT.
+Create tiles with `tile_format="mvt"`:
 
 ```python
-import maplibre
+import geopandas as gpd
+from freestiler import freestile
 from maplibre import Map, MapOptions
 from maplibre.sources import VectorTileSource
 from maplibre.layers import Layer, LayerType
 
-source = VectorTileSource(url="pmtiles://nc_counties.pmtiles")
+gdf = gpd.read_file("nc.shp")
+freestile(gdf, "nc_mvt.pmtiles", layer_name="counties", tile_format="mvt")
+
+source = VectorTileSource(url="pmtiles://nc_mvt.pmtiles")
 
 layer = Layer(
     type=LayerType.FILL,
@@ -150,10 +122,29 @@ m.add_layer(layer)
 m
 ```
 
-### In a web browser
+### leafmap (MVT)
 
-PMTiles files can be served from any static file host and viewed with MapLibre
-GL JS using the [PMTiles protocol](https://docs.protomaps.com/pmtiles/):
+leafmap also currently requires MVT format:
+
+```python
+import leafmap.maplibregl as leafmap
+
+m = leafmap.Map(center=[-79.5, 35.5], zoom=6)
+m.add_pmtiles("nc_mvt.pmtiles", style={
+    "layers": [{
+        "id": "counties",
+        "type": "fill",
+        "source-layer": "counties",
+        "paint": {"fill-color": "#00897b", "fill-opacity": 0.5}
+    }]
+})
+m
+```
+
+### MapLibre GL JS in the browser (MLT or MVT)
+
+For MLT support, use MapLibre GL JS 5.17+ directly. PMTiles files can be served
+from any static file host:
 
 ```html
 <script src="https://unpkg.com/pmtiles/dist/pmtiles.js"></script>
@@ -183,3 +174,34 @@ GL JS using the [PMTiles protocol](https://docs.protomaps.com/pmtiles/):
   });
 </script>
 ```
+
+## MLT viewer status
+
+MLT is a new format (January 2026). Current viewer support:
+
+| Viewer | MVT | MLT |
+|--------|-----|-----|
+| mapgl (R) | Yes | Yes |
+| py-maplibregl | Yes | Not yet (bundles GL JS 5.3) |
+| leafmap | Yes | Not yet |
+| MapLibre GL JS 5.17+ | Yes | Yes |
+
+As Python viewers upgrade their bundled MapLibre GL JS to 5.17+, MLT will work
+everywhere. Until then, use `tile_format="mvt"` when creating tiles for Python
+viewing.
+
+## R vs Python API
+
+The Python API mirrors R closely, with Pythonic conventions:
+
+| Feature | R | Python |
+|---------|---|--------|
+| Input type | sf data frame | GeoDataFrame |
+| Multi-layer | Named list of sf objects | Dict of GeoDataFrames |
+| Default format | `"mlt"` | `"mlt"` |
+| Zoom range | `min_zoom = 0, max_zoom = 14` | `min_zoom=0, max_zoom=14` |
+| Feature dropping | `drop_rate = 2.5` | `drop_rate=2.5` |
+| Base zoom | `base_zoom = 10` | `base_zoom=10` |
+| Point clustering | `cluster_distance = 50` | `cluster_distance=50` |
+| Feature coalescing | `coalesce = TRUE` | `coalesce=True` |
+| Layer helper | `freestile_layer()` | (use dict directly) |

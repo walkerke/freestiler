@@ -18,7 +18,7 @@ Vector tiles divide geographic data into a grid of square tiles at multiple zoom
 levels. Instead of pre-rendering images (raster tiles), they store the actual
 geometry and attribute data, allowing client-side styling, interaction, and
 dynamic rendering. The standard container for vector tilesets is
-[PMTiles](https://github.com/protomaps/PMTiles) --- a single-file, cloud-native
+[PMTiles](https://github.com/protomaps/PMTiles) -- a single-file, cloud-native
 archive that can be served from any static file host.
 
 ## MVT: the incumbent format
@@ -37,14 +37,14 @@ tag system with string interning.
 [MapLibre Tiles (MLT)](https://github.com/maplibre/maplibre-tile-spec) is a
 columnar binary tile format announced in January 2026 by the MapLibre
 organization. Where MVT stores data row-by-row (one feature at a time), MLT
-organizes data column-by-column --- all x-coordinates together, all y-coordinates
+organizes data column-by-column -- all x-coordinates together, all y-coordinates
 together, all values of a given attribute together.
 This columnar layout enables efficient compression techniques:
 
-- **Varint encoding** --- small integers use fewer bytes
-- **Delta encoding** --- coordinates stored as differences from previous values
-- **Run-length encoding (RLE)** --- repeated values compressed to count + value
-- **Dictionary encoding** --- string columns with few unique values stored as
+- **Varint encoding** -- small integers use fewer bytes
+- **Delta encoding** -- coordinates stored as differences from previous values
+- **Run-length encoding (RLE)** -- repeated values compressed to count + value
+- **Dictionary encoding** -- string columns with few unique values stored as
   indices into a dictionary
 
 ### Size comparison
@@ -65,19 +65,19 @@ and compresses similarly in both formats.
 freestiler includes a spec-compliant MLT encoder written in Rust. The encoding
 pipeline for each tile:
 
-1. **Feature sorting** --- features are sorted by Morton curve (Z-order) within
+1. **Feature sorting** -- features are sorted by Morton curve (Z-order) within
    each tile for optimal delta encoding of coordinates.
 
-2. **Geometry streams** --- coordinates are delta-encoded and varint-compressed.
+2. **Geometry streams** -- coordinates are delta-encoded and varint-compressed.
    Topology (ring lengths, part counts) uses integer RLE when beneficial.
 
-3. **Property streams** --- each attribute column is encoded independently:
+3. **Property streams** -- each attribute column is encoded independently:
    - Integers: varint + delta encoding
    - Floats: raw IEEE 754
    - Strings: dictionary encoding when cardinality is low, raw otherwise
    - Booleans: byte-RLE with ORC-style present streams
 
-4. **Nullable handling** --- null/NA values produce PRESENT bitmap streams using
+4. **Nullable handling** -- null/NA values produce PRESENT bitmap streams using
    byte-RLE encoding, matching the ORC specification.
 
 The encoder has been validated against the
@@ -86,10 +86,10 @@ The encoder has been validated against the
 ## The freestiler pipeline
 
 ```
-sf data frame
+sf / GeoDataFrame / file / SQL query
     │
     ▼
-R: decompose geometries + extract properties
+R or Python: decompose geometries + extract properties
     │
     ▼
 Rust: assign features to tiles (buffered bounds)
@@ -110,15 +110,15 @@ Rust: assemble PMTiles v3 archive
 
 Key performance features:
 
-- **Two-level parallelism** --- rayon processes tiles in parallel AND features
+- **Two-level parallelism** -- rayon processes tiles in parallel AND features
   within tiles in parallel.
-- **Tile-pixel grid snapping** --- instead of Douglas-Peucker simplification,
+- **Tile-pixel grid snapping** -- instead of Douglas-Peucker simplification,
   coordinates snap to the tile's 4096x4096 pixel grid. Shared vertices between
   adjacent polygons snap to the same pixel, preventing slivers.
-- **Buffered assignment** --- features are assigned to tiles using expanded
+- **Buffered assignment** -- features are assigned to tiles using expanded
   bounds (5% buffer) matching the clipping buffer. This eliminates seam
   artifacts at tile boundaries.
-- **Sub-pixel fast paths** --- features smaller than one pixel at a given zoom
+- **Sub-pixel fast paths** -- features smaller than one pixel at a given zoom
   level are skipped, dramatically reducing work at low zooms.
 
 ## Performance comparison
@@ -137,7 +137,7 @@ time. freestiler processes sf objects directly in memory.
 
 MLT is a new format (January 2026). Current ecosystem support:
 
-- **Encoding**: freestiler (Rust), mlt-core reference encoder (Java/C++)
+- **Encoding**: freestiler (Rust, R + Python), mlt-core reference encoder (Java/C++)
 - **Decoding**: MapLibre GL JS (experimental), mlt-core decoder
 - **Viewing**: MapLibre GL JS with MLT plugin
 
