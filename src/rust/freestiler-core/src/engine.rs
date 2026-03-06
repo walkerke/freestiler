@@ -94,12 +94,9 @@ pub fn generate_tiles(
         .iter()
         .map(|l| {
             !l.features.is_empty()
-                && l.features.iter().all(|f| {
-                    matches!(
-                        &f.geometry,
-                        Geometry::Point(_) | Geometry::MultiPoint(_)
-                    )
-                })
+                && l.features
+                    .iter()
+                    .all(|f| matches!(&f.geometry, Geometry::Point(_) | Geometry::MultiPoint(_)))
         })
         .collect();
 
@@ -114,12 +111,7 @@ pub fn generate_tiles(
                         distance: cluster_distance,
                         max_zoom: cluster_max_z,
                     };
-                    cluster::cluster_points(
-                        &layer.features,
-                        &cfg,
-                        min_z,
-                        layer.prop_names.len(),
-                    )
+                    cluster::cluster_points(&layer.features, &cfg, min_z, layer.prop_names.len())
                 } else {
                     HashMap::new()
                 }
@@ -275,8 +267,7 @@ pub fn generate_tiles(
                                 };
 
                                 // Clip to tile boundaries
-                                let clipped =
-                                    clip::clip_geometry_to_tile(geom_to_process, &coord)?;
+                                let clipped = clip::clip_geometry_to_tile(geom_to_process, &coord)?;
 
                                 // Snap to tile pixel grid
                                 let geometry = if do_simplify {
@@ -309,16 +300,11 @@ pub fn generate_tiles(
 
                         // Coalesce features within this tile/layer
                         if do_coalesce && !tile_feats.is_empty() {
-                            tile_feats =
-                                coalesce::coalesce_features(tile_feats, al.prop_names);
+                            tile_feats = coalesce::coalesce_features(tile_feats, al.prop_names);
                         }
 
                         if !tile_feats.is_empty() {
-                            tile_layer_data.push((
-                                &layer.name,
-                                al.prop_names,
-                                tile_feats,
-                            ));
+                            tile_layer_data.push((&layer.name, al.prop_names, tile_feats));
                         }
                     }
                 }
@@ -380,12 +366,9 @@ pub fn generate_pmtiles(
         .iter()
         .map(|l| {
             !l.features.is_empty()
-                && l.features.iter().all(|f| {
-                    matches!(
-                        &f.geometry,
-                        Geometry::Point(_) | Geometry::MultiPoint(_)
-                    )
-                })
+                && l.features
+                    .iter()
+                    .all(|f| matches!(&f.geometry, Geometry::Point(_) | Geometry::MultiPoint(_)))
         })
         .collect();
 

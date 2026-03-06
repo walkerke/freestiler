@@ -78,20 +78,28 @@ if (Sys.getenv("FREESTILER_FSST") != "") {
   message("Enabling FSST feature.")
 }
 
-# Additional opt-in features (NOT_CRAN only)
+# Additional optional features
 if (is_not_cran) {
   if (Sys.getenv("FREESTILER_GEOPARQUET") != "") {
     features <- c(features, "geoparquet")
     message("Enabling GeoParquet feature.")
   }
-  if (Sys.getenv("FREESTILER_DUCKDB") != "") {
-    features <- c(features, "duckdb")
-    message("Enabling DuckDB feature.")
-  }
   if (Sys.getenv("FREESTILER_FASTPFOR") != "") {
     features <- c(features, "fastpfor")
     message("Enabling FastPFOR feature.")
   }
+}
+
+# DuckDB is enabled by default for native builds. Set FREESTILER_DUCKDB=false
+# (or 0/no/off) to disable it explicitly.
+duckdb_env <- tolower(trimws(Sys.getenv("FREESTILER_DUCKDB", unset = "true")))
+duckdb_enabled <- !duckdb_env %in% c("0", "false", "no", "off")
+
+if (!is_wasm && duckdb_enabled) {
+  features <- c(features, "duckdb")
+  message("Enabling DuckDB feature.")
+} else if (!is_wasm) {
+  message("DuckDB feature disabled.")
 }
 .features <- if (length(features) > 0) {
   paste0("--features ", paste(features, collapse = ","))

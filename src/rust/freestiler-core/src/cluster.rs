@@ -86,10 +86,7 @@ fn cluster_at_zoom(
 
     // Build grid-based spatial index
     let mut grid: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
-    let coords: Vec<(f64, f64)> = features
-        .iter()
-        .map(|f| point_coords(&f.geometry))
-        .collect();
+    let coords: Vec<(f64, f64)> = features.iter().map(|f| point_coords(&f.geometry)).collect();
 
     for (i, &(lon, lat)) in coords.iter().enumerate() {
         let cx = (lon / cell_size).floor() as i64;

@@ -298,23 +298,20 @@ fn parse_features_from_sfc(
     let char_cols: Vec<Option<Vec<Option<String>>>> = (0..prop_names.len())
         .map(|i| {
             if prop_types[i] == "character" {
-                prop_char_values
-                    .elt(i as _)
-                    .ok()
-                    .and_then(|v| {
-                        let strs: Strings = v.try_into().ok()?;
-                        Some(
-                            strs.iter()
-                                .map(|s| {
-                                    if s.is_na() {
-                                        None
-                                    } else {
-                                        Some(s.as_str().to_string())
-                                    }
-                                })
-                                .collect(),
-                        )
-                    })
+                prop_char_values.elt(i as _).ok().and_then(|v| {
+                    let strs: Strings = v.try_into().ok()?;
+                    Some(
+                        strs.iter()
+                            .map(|s| {
+                                if s.is_na() {
+                                    None
+                                } else {
+                                    Some(s.as_str().to_string())
+                                }
+                            })
+                            .collect(),
+                    )
+                })
             } else {
                 None
             }
@@ -324,13 +321,10 @@ fn parse_features_from_sfc(
     let num_cols: Vec<Option<Vec<f64>>> = (0..prop_names.len())
         .map(|i| {
             if prop_types[i] == "numeric" {
-                prop_num_values
-                    .elt(i as _)
-                    .ok()
-                    .and_then(|v| {
-                        let doubles: Doubles = v.try_into().ok()?;
-                        Some(doubles.iter().map(|d| d.inner()).collect())
-                    })
+                prop_num_values.elt(i as _).ok().and_then(|v| {
+                    let doubles: Doubles = v.try_into().ok()?;
+                    Some(doubles.iter().map(|d| d.inner()).collect())
+                })
             } else {
                 None
             }
@@ -340,13 +334,10 @@ fn parse_features_from_sfc(
     let int_cols: Vec<Option<Vec<i32>>> = (0..prop_names.len())
         .map(|i| {
             if prop_types[i] == "integer" {
-                prop_int_values
-                    .elt(i as _)
-                    .ok()
-                    .and_then(|v| {
-                        let ints: Integers = v.try_into().ok()?;
-                        Some(ints.iter().map(|x| x.inner()).collect())
-                    })
+                prop_int_values.elt(i as _).ok().and_then(|v| {
+                    let ints: Integers = v.try_into().ok()?;
+                    Some(ints.iter().map(|x| x.inner()).collect())
+                })
             } else {
                 None
             }
@@ -356,13 +347,10 @@ fn parse_features_from_sfc(
     let lgl_cols: Vec<Option<Vec<i32>>> = (0..prop_names.len())
         .map(|i| {
             if prop_types[i] == "logical" {
-                prop_lgl_values
-                    .elt(i as _)
-                    .ok()
-                    .and_then(|v| {
-                        let logicals: Logicals = v.try_into().ok()?;
-                        Some(logicals.iter().map(|x| x.inner()).collect())
-                    })
+                prop_lgl_values.elt(i as _).ok().and_then(|v| {
+                    let logicals: Logicals = v.try_into().ok()?;
+                    Some(logicals.iter().map(|x| x.inner()).collect())
+                })
             } else {
                 None
             }
@@ -648,10 +636,23 @@ fn rust_freestile_file(
 ) -> String {
     #[cfg(not(feature = "geoparquet"))]
     {
-        let _ = (input_path, output_path, layer_name, tile_format, min_zoom,
-                 max_zoom, base_zoom, do_simplify, drop_rate, cluster_distance,
-                 cluster_maxzoom, do_coalesce, quiet);
-        return "Error: GeoParquet support not compiled. Rebuild with FREESTILER_GEOPARQUET=true.".to_string();
+        let _ = (
+            input_path,
+            output_path,
+            layer_name,
+            tile_format,
+            min_zoom,
+            max_zoom,
+            base_zoom,
+            do_simplify,
+            drop_rate,
+            cluster_distance,
+            cluster_maxzoom,
+            do_coalesce,
+            quiet,
+        );
+        return "Error: GeoParquet support not compiled. Rebuild with FREESTILER_GEOPARQUET=true."
+            .to_string();
     }
 
     #[cfg(feature = "geoparquet")]
@@ -684,11 +685,27 @@ fn rust_freestile_file(
             },
             min_zoom: min_zoom as u8,
             max_zoom: max_zoom as u8,
-            base_zoom: if base_zoom < 0 { None } else { Some(base_zoom as u8) },
+            base_zoom: if base_zoom < 0 {
+                None
+            } else {
+                Some(base_zoom as u8)
+            },
             simplification: do_simplify,
-            drop_rate: if drop_rate > 0.0 { Some(drop_rate) } else { None },
-            cluster_distance: if cluster_distance > 0.0 { Some(cluster_distance) } else { None },
-            cluster_maxzoom: if cluster_maxzoom >= 0 { Some(cluster_maxzoom as u8) } else { None },
+            drop_rate: if drop_rate > 0.0 {
+                Some(drop_rate)
+            } else {
+                None
+            },
+            cluster_distance: if cluster_distance > 0.0 {
+                Some(cluster_distance)
+            } else {
+                None
+            },
+            cluster_maxzoom: if cluster_maxzoom >= 0 {
+                Some(cluster_maxzoom as u8)
+            } else {
+                None
+            },
             coalesce: do_coalesce,
         };
 
@@ -732,10 +749,23 @@ fn rust_freestile_duckdb(
 ) -> String {
     #[cfg(not(feature = "duckdb"))]
     {
-        let _ = (input_path, output_path, layer_name, tile_format, min_zoom,
-                 max_zoom, base_zoom, do_simplify, drop_rate, cluster_distance,
-                 cluster_maxzoom, do_coalesce, quiet);
-        return "Error: DuckDB support not compiled. Rebuild with FREESTILER_DUCKDB=true.".to_string();
+        let _ = (
+            input_path,
+            output_path,
+            layer_name,
+            tile_format,
+            min_zoom,
+            max_zoom,
+            base_zoom,
+            do_simplify,
+            drop_rate,
+            cluster_distance,
+            cluster_maxzoom,
+            do_coalesce,
+            quiet,
+        );
+        return "Error: DuckDB support not compiled. Install the r-universe build or rebuild from source with DuckDB enabled."
+            .to_string();
     }
 
     #[cfg(feature = "duckdb")]
@@ -768,11 +798,27 @@ fn rust_freestile_duckdb(
             },
             min_zoom: min_zoom as u8,
             max_zoom: max_zoom as u8,
-            base_zoom: if base_zoom < 0 { None } else { Some(base_zoom as u8) },
+            base_zoom: if base_zoom < 0 {
+                None
+            } else {
+                Some(base_zoom as u8)
+            },
             simplification: do_simplify,
-            drop_rate: if drop_rate > 0.0 { Some(drop_rate) } else { None },
-            cluster_distance: if cluster_distance > 0.0 { Some(cluster_distance) } else { None },
-            cluster_maxzoom: if cluster_maxzoom >= 0 { Some(cluster_maxzoom as u8) } else { None },
+            drop_rate: if drop_rate > 0.0 {
+                Some(drop_rate)
+            } else {
+                None
+            },
+            cluster_distance: if cluster_distance > 0.0 {
+                Some(cluster_distance)
+            } else {
+                None
+            },
+            cluster_maxzoom: if cluster_maxzoom >= 0 {
+                Some(cluster_maxzoom as u8)
+            } else {
+                None
+            },
             coalesce: do_coalesce,
         };
 
@@ -798,6 +844,7 @@ fn rust_freestile_duckdb(
 /// @param cluster_maxzoom Max zoom for clustering (negative = use max_zoom - 1)
 /// @param do_coalesce Whether to coalesce features
 /// @param quiet Whether to suppress progress
+/// @param streaming_mode "auto", "always", or "never"
 /// @export
 #[extendr]
 fn rust_freestile_duckdb_query(
@@ -815,13 +862,29 @@ fn rust_freestile_duckdb_query(
     cluster_maxzoom: i32,
     do_coalesce: bool,
     quiet: bool,
+    streaming_mode: &str,
 ) -> String {
     #[cfg(not(feature = "duckdb"))]
     {
-        let _ = (sql, db_path, output_path, layer_name, tile_format, min_zoom,
-                 max_zoom, base_zoom, do_simplify, drop_rate, cluster_distance,
-                 cluster_maxzoom, do_coalesce, quiet);
-        return "Error: DuckDB support not compiled. Rebuild with FREESTILER_DUCKDB=true.".to_string();
+        let _ = (
+            sql,
+            db_path,
+            output_path,
+            layer_name,
+            tile_format,
+            min_zoom,
+            max_zoom,
+            base_zoom,
+            do_simplify,
+            drop_rate,
+            cluster_distance,
+            cluster_maxzoom,
+            do_coalesce,
+            quiet,
+            streaming_mode,
+        );
+        return "Error: DuckDB support not compiled. Install the r-universe build or rebuild from source with DuckDB enabled."
+            .to_string();
     }
 
     #[cfg(feature = "duckdb")]
@@ -832,7 +895,75 @@ fn rust_freestile_duckdb_query(
             Box::new(RReporter)
         };
 
-        let db_path_opt = if db_path.is_empty() { None } else { Some(db_path) };
+        let db_path_opt = if db_path.is_empty() {
+            None
+        } else {
+            Some(db_path)
+        };
+        let config = TileConfig {
+            tile_format: match tile_format {
+                "mlt" => TileFormat::Mlt,
+                _ => TileFormat::Mvt,
+            },
+            min_zoom: min_zoom as u8,
+            max_zoom: max_zoom as u8,
+            base_zoom: if base_zoom < 0 {
+                None
+            } else {
+                Some(base_zoom as u8)
+            },
+            simplification: do_simplify,
+            drop_rate: if drop_rate > 0.0 {
+                Some(drop_rate)
+            } else {
+                None
+            },
+            cluster_distance: if cluster_distance > 0.0 {
+                Some(cluster_distance)
+            } else {
+                None
+            },
+            cluster_maxzoom: if cluster_maxzoom >= 0 {
+                Some(cluster_maxzoom as u8)
+            } else {
+                None
+            },
+            coalesce: do_coalesce,
+        };
+
+        let maybe_stream = match streaming_mode {
+            "always" => true,
+            "auto" if cluster_distance <= 0.0 => {
+                freestiler_core::streaming::query_feature_count(db_path_opt, sql)
+                    .map(|count| count >= freestiler_core::streaming::auto_threshold())
+                    .unwrap_or(false)
+            }
+            _ => false,
+        };
+
+        if maybe_stream {
+            match freestiler_core::streaming::generate_pmtiles_from_duckdb_query(
+                db_path_opt,
+                sql,
+                output_path,
+                layer_name,
+                &config,
+                reporter.as_ref(),
+            ) {
+                Ok(_) => return output_path.to_string(),
+                Err(e) => {
+                    let can_fallback = streaming_mode == "auto"
+                        && (e.contains("POINT geometries only")
+                            || e.contains("does not support clustering"));
+                    if !can_fallback {
+                        return format!("Error: {}", e);
+                    }
+                    if !quiet {
+                        reporter.report("  Streaming unavailable for this query, falling back to in-memory tiling");
+                    }
+                }
+            }
+        }
 
         let layers = match freestiler_core::file_input::duckdb_query_to_layers(
             db_path_opt,
@@ -849,21 +980,6 @@ fn rust_freestile_duckdb_query(
             let total: usize = layers.iter().map(|l| l.features.len()).sum();
             reporter.report(&format!("  Query returned {} features", total));
         }
-
-        let config = TileConfig {
-            tile_format: match tile_format {
-                "mlt" => TileFormat::Mlt,
-                _ => TileFormat::Mvt,
-            },
-            min_zoom: min_zoom as u8,
-            max_zoom: max_zoom as u8,
-            base_zoom: if base_zoom < 0 { None } else { Some(base_zoom as u8) },
-            simplification: do_simplify,
-            drop_rate: if drop_rate > 0.0 { Some(drop_rate) } else { None },
-            cluster_distance: if cluster_distance > 0.0 { Some(cluster_distance) } else { None },
-            cluster_maxzoom: if cluster_maxzoom >= 0 { Some(cluster_maxzoom as u8) } else { None },
-            coalesce: do_coalesce,
-        };
 
         match engine::generate_pmtiles(&layers, output_path, &config, reporter.as_ref()) {
             Ok(()) => output_path.to_string(),

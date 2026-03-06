@@ -50,8 +50,8 @@ mod geoparquet_impl {
         let builder = ParquetRecordBatchReaderBuilder::try_new(file)
             .map_err(|e| format!("Cannot read parquet: {}", e))?;
 
-        let geom_col_name = find_geometry_column(builder.metadata())
-            .unwrap_or_else(|| "geometry".to_string());
+        let geom_col_name =
+            find_geometry_column(builder.metadata()).unwrap_or_else(|| "geometry".to_string());
 
         check_crs_is_wgs84(builder.metadata(), &geom_col_name)?;
 
@@ -128,17 +128,13 @@ mod geoparquet_impl {
         }])
     }
 
-    fn find_geometry_column(
-        metadata: &parquet::file::metadata::ParquetMetaData,
-    ) -> Option<String> {
+    fn find_geometry_column(metadata: &parquet::file::metadata::ParquetMetaData) -> Option<String> {
         let kv = metadata.file_metadata().key_value_metadata()?;
         for entry in kv {
             if entry.key == "geo" {
                 if let Some(ref value) = entry.value {
                     if let Ok(geo_meta) = serde_json::from_str::<serde_json::Value>(value) {
-                        if let Some(col) =
-                            geo_meta.get("primary_column").and_then(|v| v.as_str())
-                        {
+                        if let Some(col) = geo_meta.get("primary_column").and_then(|v| v.as_str()) {
                             return Some(col.to_string());
                         }
                     }
@@ -176,14 +172,9 @@ mod geoparquet_impl {
 
                             // Check for EPSG:4326 / OGC:CRS84 in the PROJJSON id
                             if let Some(id) = crs.get("id") {
-                                let authority = id
-                                    .get("authority")
-                                    .and_then(|a| a.as_str())
-                                    .unwrap_or("");
-                                let code = id
-                                    .get("code")
-                                    .and_then(|c| c.as_u64())
-                                    .unwrap_or(0);
+                                let authority =
+                                    id.get("authority").and_then(|a| a.as_str()).unwrap_or("");
+                                let code = id.get("code").and_then(|c| c.as_u64()).unwrap_or(0);
 
                                 if (authority == "EPSG" && code == 4326)
                                     || (authority == "OGC" && code == 84)
@@ -258,32 +249,41 @@ mod geoparquet_impl {
         match col.data_type() {
             DataType::Boolean => PropertyValue::Bool(col.as_boolean().value(row)),
             DataType::Int8 => PropertyValue::Int(
-                col.as_primitive::<arrow_array::types::Int8Type>().value(row) as i64,
+                col.as_primitive::<arrow_array::types::Int8Type>()
+                    .value(row) as i64,
             ),
             DataType::Int16 => PropertyValue::Int(
-                col.as_primitive::<arrow_array::types::Int16Type>().value(row) as i64,
+                col.as_primitive::<arrow_array::types::Int16Type>()
+                    .value(row) as i64,
             ),
             DataType::Int32 => PropertyValue::Int(
-                col.as_primitive::<arrow_array::types::Int32Type>().value(row) as i64,
+                col.as_primitive::<arrow_array::types::Int32Type>()
+                    .value(row) as i64,
             ),
             DataType::Int64 => PropertyValue::Int(
-                col.as_primitive::<arrow_array::types::Int64Type>().value(row),
+                col.as_primitive::<arrow_array::types::Int64Type>()
+                    .value(row),
             ),
             DataType::UInt8 => PropertyValue::Int(
-                col.as_primitive::<arrow_array::types::UInt8Type>().value(row) as i64,
+                col.as_primitive::<arrow_array::types::UInt8Type>()
+                    .value(row) as i64,
             ),
             DataType::UInt16 => PropertyValue::Int(
-                col.as_primitive::<arrow_array::types::UInt16Type>().value(row) as i64,
+                col.as_primitive::<arrow_array::types::UInt16Type>()
+                    .value(row) as i64,
             ),
             DataType::UInt32 => PropertyValue::Int(
-                col.as_primitive::<arrow_array::types::UInt32Type>().value(row) as i64,
+                col.as_primitive::<arrow_array::types::UInt32Type>()
+                    .value(row) as i64,
             ),
             DataType::UInt64 => PropertyValue::Int(
-                col.as_primitive::<arrow_array::types::UInt64Type>().value(row) as i64,
+                col.as_primitive::<arrow_array::types::UInt64Type>()
+                    .value(row) as i64,
             ),
             DataType::Float32 => {
-                let v =
-                    col.as_primitive::<arrow_array::types::Float32Type>().value(row) as f64;
+                let v = col
+                    .as_primitive::<arrow_array::types::Float32Type>()
+                    .value(row) as f64;
                 if v.is_nan() {
                     PropertyValue::Null
                 } else {
@@ -291,19 +291,19 @@ mod geoparquet_impl {
                 }
             }
             DataType::Float64 => {
-                let v = col.as_primitive::<arrow_array::types::Float64Type>().value(row);
+                let v = col
+                    .as_primitive::<arrow_array::types::Float64Type>()
+                    .value(row);
                 if v.is_nan() {
                     PropertyValue::Null
                 } else {
                     PropertyValue::Double(v)
                 }
             }
-            DataType::Utf8 => PropertyValue::String(
-                col.as_string::<i32>().value(row).to_string(),
-            ),
-            DataType::LargeUtf8 => PropertyValue::String(
-                col.as_string::<i64>().value(row).to_string(),
-            ),
+            DataType::Utf8 => PropertyValue::String(col.as_string::<i32>().value(row).to_string()),
+            DataType::LargeUtf8 => {
+                PropertyValue::String(col.as_string::<i64>().value(row).to_string())
+            }
             _ => PropertyValue::Null,
         }
     }
@@ -319,6 +319,14 @@ pub use geoparquet_impl::parquet_to_layers;
 #[cfg(feature = "duckdb")]
 mod duckdb_impl {
     use super::*;
+
+    #[derive(Clone, Copy)]
+    enum DuckDbValueKind {
+        String,
+        Int,
+        Double,
+        Bool,
+    }
 
     pub fn duckdb_file_to_layers(
         path: &str,
@@ -344,9 +352,7 @@ mod duckdb_impl {
 
         let conn = match db_path {
             Some(p) => Connection::open(p).map_err(|e| format!("Cannot open DB: {}", e))?,
-            None => {
-                Connection::open_in_memory().map_err(|e| format!("Cannot open DB: {}", e))?
-            }
+            None => Connection::open_in_memory().map_err(|e| format!("Cannot open DB: {}", e))?,
         };
 
         conn.execute_batch("INSTALL spatial; LOAD spatial;")
@@ -373,9 +379,7 @@ mod duckdb_impl {
             for row in rows {
                 let (name, dtype) = row.map_err(|e| format!("Cannot read column info: {}", e))?;
                 let dt = dtype.to_uppercase();
-                if geom_col_name.is_none()
-                    && (dt == "GEOMETRY" || dt.starts_with("GEOMETRY"))
-                {
+                if geom_col_name.is_none() && (dt == "GEOMETRY" || dt.starts_with("GEOMETRY")) {
                     geom_col_name = Some(name.clone());
                 }
                 all_columns.push((name, dtype));
@@ -386,23 +390,24 @@ mod duckdb_impl {
             "No geometry column found in query result. Ensure your query returns a GEOMETRY column.".to_string()
         })?;
 
-        // Build column name list for the wrapped query: original columns + __wkb
-        let mut column_names: Vec<String> = all_columns.iter().map(|(n, _)| n.clone()).collect();
-        column_names.push("__wkb".to_string());
-        let wkb_col_idx = column_names.len() - 1;
+        let wkb_col_idx = all_columns.len();
 
         let geom_col_lower = geom_col_name.to_lowercase();
         let skip_cols: Vec<String> = vec![geom_col_lower, "__wkb".into()];
         let mut prop_names: Vec<String> = Vec::new();
         let mut prop_col_indices: Vec<usize> = Vec::new();
+        let mut prop_types: Vec<String> = Vec::new();
+        let mut prop_value_kinds: Vec<DuckDbValueKind> = Vec::new();
 
-        for (i, name) in column_names.iter().enumerate() {
+        for (i, (name, dtype)) in all_columns.iter().enumerate() {
             let name_lower = name.to_lowercase();
             if skip_cols.contains(&name_lower) {
                 continue;
             }
             prop_names.push(name.clone());
             prop_col_indices.push(i);
+            prop_types.push(duckdb_type_to_property_type(dtype));
+            prop_value_kinds.push(duckdb_type_to_value_kind(dtype));
         }
 
         // Detect source CRS via ST_SRID on the first non-null geometry
@@ -411,9 +416,7 @@ mod duckdb_impl {
             geom_col_name, sql, geom_col_name
         );
         let source_srid: Option<String> = conn
-            .query_row(&srid_sql, params![], |row| {
-                row.get::<_, String>(0)
-            })
+            .query_row(&srid_sql, params![], |row| row.get::<_, String>(0))
             .ok();
 
         // Build geometry expression: reproject if not already WGS84
@@ -430,18 +433,13 @@ mod duckdb_impl {
             }
         };
 
-        let wkb_sql = format!(
-            "SELECT *, {} AS __wkb FROM ({}) AS __t",
-            geom_expr, sql
-        );
+        let wkb_sql = format!("SELECT *, {} AS __wkb FROM ({}) AS __t", geom_expr, sql);
 
         let mut stmt = conn
             .prepare(&wkb_sql)
             .map_err(|e| format!("Query error: {}", e))?;
 
         let mut features: Vec<Feature> = Vec::new();
-        let mut prop_types: Vec<String> = Vec::new();
-        let mut first_row = true;
 
         let mut rows = stmt
             .query(params![])
@@ -458,22 +456,8 @@ mod duckdb_impl {
             };
 
             let mut properties = Vec::with_capacity(prop_names.len());
-            for &col_idx in &prop_col_indices {
-                properties.push(extract_value(row, col_idx));
-            }
-
-            if first_row {
-                prop_types = properties
-                    .iter()
-                    .map(|v| match v {
-                        PropertyValue::String(_) => "character".to_string(),
-                        PropertyValue::Int(_) => "integer".to_string(),
-                        PropertyValue::Double(_) => "numeric".to_string(),
-                        PropertyValue::Bool(_) => "logical".to_string(),
-                        PropertyValue::Null => "character".to_string(),
-                    })
-                    .collect();
-                first_row = false;
+            for (&col_idx, &kind) in prop_col_indices.iter().zip(prop_value_kinds.iter()) {
+                properties.push(extract_value(row, col_idx, kind));
             }
 
             features.push(Feature {
@@ -497,23 +481,71 @@ mod duckdb_impl {
         }])
     }
 
-    fn extract_value(row: &duckdb::Row, col_idx: usize) -> PropertyValue {
-        if let Ok(v) = row.get::<_, i64>(col_idx) {
-            return PropertyValue::Int(v);
+    fn extract_value(row: &duckdb::Row, col_idx: usize, kind: DuckDbValueKind) -> PropertyValue {
+        match kind {
+            DuckDbValueKind::String => row
+                .get::<_, Option<String>>(col_idx)
+                .ok()
+                .flatten()
+                .map(PropertyValue::String)
+                .unwrap_or(PropertyValue::Null),
+            DuckDbValueKind::Int => row
+                .get::<_, Option<i64>>(col_idx)
+                .ok()
+                .flatten()
+                .map(PropertyValue::Int)
+                .unwrap_or(PropertyValue::Null),
+            DuckDbValueKind::Double => row
+                .get::<_, Option<f64>>(col_idx)
+                .ok()
+                .flatten()
+                .map(|v| {
+                    if v.is_nan() {
+                        PropertyValue::Null
+                    } else {
+                        PropertyValue::Double(v)
+                    }
+                })
+                .unwrap_or(PropertyValue::Null),
+            DuckDbValueKind::Bool => row
+                .get::<_, Option<bool>>(col_idx)
+                .ok()
+                .flatten()
+                .map(PropertyValue::Bool)
+                .unwrap_or(PropertyValue::Null),
         }
-        if let Ok(v) = row.get::<_, f64>(col_idx) {
-            if v.is_nan() {
-                return PropertyValue::Null;
-            }
-            return PropertyValue::Double(v);
+    }
+
+    fn duckdb_type_to_property_type(dtype: &str) -> String {
+        match duckdb_type_to_value_kind(dtype) {
+            DuckDbValueKind::String => "character".to_string(),
+            DuckDbValueKind::Int => "integer".to_string(),
+            DuckDbValueKind::Double => "numeric".to_string(),
+            DuckDbValueKind::Bool => "logical".to_string(),
         }
-        if let Ok(v) = row.get::<_, bool>(col_idx) {
-            return PropertyValue::Bool(v);
+    }
+
+    fn duckdb_type_to_value_kind(dtype: &str) -> DuckDbValueKind {
+        let dt = dtype.trim().to_uppercase();
+        if matches!(dt.as_str(), "BOOLEAN" | "BOOL" | "LOGICAL") {
+            DuckDbValueKind::Bool
+        } else if matches!(
+            dt.as_str(),
+            "TINYINT"
+                | "SMALLINT"
+                | "INTEGER"
+                | "INT"
+                | "BIGINT"
+                | "UTINYINT"
+                | "USMALLINT"
+                | "UINTEGER"
+        ) {
+            DuckDbValueKind::Int
+        } else if matches!(dt.as_str(), "REAL" | "FLOAT" | "DOUBLE") || dt.starts_with("DECIMAL") {
+            DuckDbValueKind::Double
+        } else {
+            DuckDbValueKind::String
         }
-        if let Ok(v) = row.get::<_, String>(col_idx) {
-            return PropertyValue::String(v);
-        }
-        PropertyValue::Null
     }
 }
 

@@ -20,7 +20,8 @@ freestile_query(
   simplification = TRUE,
   overwrite = TRUE,
   quiet = FALSE,
-  source_crs = NULL
+  source_crs = NULL,
+  streaming = "auto"
 )
 }
 \arguments{
@@ -63,15 +64,18 @@ grid (default TRUE).}
 \item{source_crs}{Character or NULL. CRS of the geometry returned by
 \code{query}, for example \code{"EPSG:4326"} or \code{"EPSG:4267"}. Used only by the R
 \code{duckdb} fallback; ignored by the Rust DuckDB backend.}
+
+\item{streaming}{Character. DuckDB query execution mode: \code{"auto"} (default),
+\code{"always"}, or \code{"never"}.}
 }
 \value{
 The output file path (invisibly).
 }
 \description{
 Executes a SQL query via DuckDB's spatial extension and pipes the results
-into the tiling engine. Uses the Rust DuckDB backend if compiled
-(\code{FREESTILER_DUCKDB=true}), or falls back to the R \code{duckdb} package.
-Control backend selection with
+into the tiling engine. Uses the Rust DuckDB backend when included in the
+build (enabled by default for native builds), or falls back to the R
+\code{duckdb} package. Control backend selection with
 \code{options(freestiler.duckdb_backend = "auto"|"rust"|"r")}.
 }
 \details{

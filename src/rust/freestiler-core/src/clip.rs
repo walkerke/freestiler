@@ -2,7 +2,7 @@ use geo_types::{
     Coord, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon, Rect,
 };
 
-use crate::tiler::{Geometry, TileCoord, tile_bounds};
+use crate::tiler::{tile_bounds, Geometry, TileCoord};
 
 /// Buffer factor as a fraction of tile extent (5% on each side)
 const BUFFER_FRACTION: f64 = 0.05;
@@ -34,27 +34,24 @@ pub fn clip_geometry_to_tile(geom: &Geometry, coord: &TileCoord) -> Option<Geome
             }
         }
         Geometry::MultiPoint(mp) => {
-            let points: Vec<Point<f64>> = mp
-                .0
-                .iter()
-                .filter(|p| point_in_rect(&p.0, &buffered))
-                .cloned()
-                .collect();
+            let points: Vec<Point<f64>> =
+                mp.0.iter()
+                    .filter(|p| point_in_rect(&p.0, &buffered))
+                    .cloned()
+                    .collect();
             if points.is_empty() {
                 None
             } else {
                 Some(Geometry::MultiPoint(MultiPoint(points)))
             }
         }
-        Geometry::LineString(ls) => {
-            clip_linestring(ls, &buffered).map(|mls| {
-                if mls.0.len() == 1 {
-                    Geometry::LineString(mls.0.into_iter().next().unwrap())
-                } else {
-                    Geometry::MultiLineString(mls)
-                }
-            })
-        }
+        Geometry::LineString(ls) => clip_linestring(ls, &buffered).map(|mls| {
+            if mls.0.len() == 1 {
+                Geometry::LineString(mls.0.into_iter().next().unwrap())
+            } else {
+                Geometry::MultiLineString(mls)
+            }
+        }),
         Geometry::MultiLineString(mls) => {
             let mut all_lines = Vec::new();
             for ls in &mls.0 {
@@ -68,15 +65,13 @@ pub fn clip_geometry_to_tile(geom: &Geometry, coord: &TileCoord) -> Option<Geome
                 Some(Geometry::MultiLineString(MultiLineString(all_lines)))
             }
         }
-        Geometry::Polygon(poly) => {
-            clip_polygon(poly, &buffered).map(|mp| {
-                if mp.0.len() == 1 {
-                    Geometry::Polygon(mp.0.into_iter().next().unwrap())
-                } else {
-                    Geometry::MultiPolygon(mp)
-                }
-            })
-        }
+        Geometry::Polygon(poly) => clip_polygon(poly, &buffered).map(|mp| {
+            if mp.0.len() == 1 {
+                Geometry::Polygon(mp.0.into_iter().next().unwrap())
+            } else {
+                Geometry::MultiPolygon(mp)
+            }
+        }),
         Geometry::MultiPolygon(mp) => {
             let mut all_polys = Vec::new();
             for poly in &mp.0 {
@@ -114,9 +109,7 @@ fn clip_linestring(ls: &LineString<f64>, rect: &Rect<f64>) -> Option<MultiLineSt
             // Try to extend the last segment
             if let Some(last) = clipped_segments.last_mut() {
                 let last_coord = *last.0.last().unwrap();
-                if (last_coord.x - c0.x).abs() < 1e-10
-                    && (last_coord.y - c0.y).abs() < 1e-10
-                {
+                if (last_coord.x - c0.x).abs() < 1e-10 && (last_coord.y - c0.y).abs() < 1e-10 {
                     last.0.push(c1);
                     continue;
                 }

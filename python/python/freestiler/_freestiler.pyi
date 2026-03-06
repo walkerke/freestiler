@@ -63,4 +63,5 @@ def _freestile_duckdb_query(
     cluster_distance: float,
     cluster_maxzoom: int,
     do_coalesce: bool,
+    streaming_mode: str,
 ) -> str: ...

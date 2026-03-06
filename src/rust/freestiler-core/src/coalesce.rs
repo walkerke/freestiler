@@ -1,6 +1,6 @@
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use std::collections::hash_map::DefaultHasher;
 
 use geo_types::{Coord, LineString, MultiLineString, MultiPolygon, Polygon};
 
@@ -219,12 +219,7 @@ fn merge_line_group(features: Vec<Feature>) -> Vec<Feature> {
             properties: props,
         }]
     } else {
-        let multi = MultiLineString(
-            merged_lines
-                .into_iter()
-                .map(LineString)
-                .collect(),
-        );
+        let multi = MultiLineString(merged_lines.into_iter().map(LineString).collect());
         vec![Feature {
             id,
             geometry: Geometry::MultiLineString(multi),

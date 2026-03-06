@@ -1,7 +1,7 @@
 # Helper to check if Rust duckdb feature is compiled
 .has_rust_duckdb_test <- function() {
   result <- rust_freestile_duckdb_query("", "", "", "", "mvt", 0L, 6L, -1L,
-    TRUE, -1.0, -1.0, -1L, FALSE, TRUE)
+    TRUE, -1.0, -1.0, -1L, FALSE, TRUE, "never")
   !startsWith(result, "Error: DuckDB support not compiled")
 }
 
@@ -62,6 +62,55 @@ test_that("freestile_query works with MVT via Rust backend", {
 
   expect_true(file.exists(output))
   expect_true(file.info(output)$size > 0)
+})
+
+test_that("freestile_query supports streaming point mode via Rust backend", {
+  skip_on_cran()
+  skip_if_not(.has_rust_duckdb_test(), message = "Rust DuckDB not compiled")
+
+  withr::local_options(freestiler.duckdb_backend = "rust")
+
+  output <- tempfile(fileext = ".pmtiles")
+  on.exit(unlink(output), add = TRUE)
+
+  result <- freestile_query(
+    query = paste(
+      "SELECT * FROM (VALUES",
+      "('a', 1, ST_Point(-78.6, 35.8)),",
+      "('b', 2, ST_Point(-80.2, 36.1)),",
+      "('c', 3, ST_Point(-82.5, 34.2))",
+      ") AS t(label, score, geometry)"
+    ),
+    output = output,
+    layer_name = "points",
+    max_zoom = 6,
+    quiet = TRUE,
+    streaming = "always"
+  )
+
+  expect_true(file.exists(output))
+  expect_true(file.info(output)$size > 0)
+  expect_equal(result, output)
+})
+
+test_that("freestile_query streaming mode rejects non-point geometries", {
+  skip_on_cran()
+  skip_if_not(.has_rust_duckdb_test(), message = "Rust DuckDB not compiled")
+
+  withr::local_options(freestiler.duckdb_backend = "rust")
+
+  output <- tempfile(fileext = ".pmtiles")
+  on.exit(unlink(output), add = TRUE)
+
+  expect_error(
+    freestile_query(
+      query = "SELECT ST_GeomFromText('POLYGON((-80 35, -78 35, -78 37, -80 37, -80 35))') AS geometry",
+      output = output,
+      quiet = TRUE,
+      streaming = "always"
+    ),
+    "POINT geometries only"
+  )
 })
 
 # --- R duckdb package fallback tests (skip if not installed) ---

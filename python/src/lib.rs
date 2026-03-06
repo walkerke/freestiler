@@ -60,12 +60,9 @@ fn parse_layers_from_py(
         let prop_types: Vec<String> = layer.get_item("prop_types")?.extract()?;
         let string_columns: Vec<Vec<Option<String>>> =
             layer.get_item("string_columns")?.extract()?;
-        let int_columns: Vec<Vec<Option<i64>>> =
-            layer.get_item("int_columns")?.extract()?;
-        let float_columns: Vec<Vec<Option<f64>>> =
-            layer.get_item("float_columns")?.extract()?;
-        let bool_columns: Vec<Vec<Option<bool>>> =
-            layer.get_item("bool_columns")?.extract()?;
+        let int_columns: Vec<Vec<Option<i64>>> = layer.get_item("int_columns")?.extract()?;
+        let float_columns: Vec<Vec<Option<f64>>> = layer.get_item("float_columns")?.extract()?;
+        let bool_columns: Vec<Vec<Option<bool>>> = layer.get_item("bool_columns")?.extract()?;
         let layer_min_zoom: u8 = layer.get_item("min_zoom")?.extract()?;
         let layer_max_zoom: u8 = layer.get_item("max_zoom")?.extract()?;
 
@@ -349,10 +346,9 @@ fn _freestile_file(
         Box::new(PyReporter)
     };
 
-    let layers = freestiler_core::file_input::parquet_to_layers(
-        input_path, layer_name, min_zoom, max_zoom,
-    )
-    .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))?;
+    let layers =
+        freestiler_core::file_input::parquet_to_layers(input_path, layer_name, min_zoom, max_zoom)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))?;
 
     if !quiet {
         let total: usize = layers.iter().map(|l| l.features.len()).sum();
@@ -366,11 +362,27 @@ fn _freestile_file(
         },
         min_zoom,
         max_zoom,
-        base_zoom: if base_zoom < 0 { None } else { Some(base_zoom as u8) },
+        base_zoom: if base_zoom < 0 {
+            None
+        } else {
+            Some(base_zoom as u8)
+        },
         simplification: do_simplify,
-        drop_rate: if drop_rate > 0.0 { Some(drop_rate) } else { None },
-        cluster_distance: if cluster_distance > 0.0 { Some(cluster_distance) } else { None },
-        cluster_maxzoom: if cluster_maxzoom >= 0 { Some(cluster_maxzoom as u8) } else { None },
+        drop_rate: if drop_rate > 0.0 {
+            Some(drop_rate)
+        } else {
+            None
+        },
+        cluster_distance: if cluster_distance > 0.0 {
+            Some(cluster_distance)
+        } else {
+            None
+        },
+        cluster_maxzoom: if cluster_maxzoom >= 0 {
+            Some(cluster_maxzoom as u8)
+        } else {
+            None
+        },
         coalesce: do_coalesce,
     };
 
@@ -388,7 +400,7 @@ fn _freestile_file(
 #[pyfunction]
 #[pyo3(signature = (sql, db_path, output_path, layer_name, tile_format, min_zoom,
     max_zoom, base_zoom, do_simplify, quiet, drop_rate, cluster_distance,
-    cluster_maxzoom, do_coalesce))]
+    cluster_maxzoom, do_coalesce, streaming_mode))]
 fn _freestile_duckdb_query(
     sql: &str,
     db_path: Option<&str>,
@@ -404,12 +416,80 @@ fn _freestile_duckdb_query(
     cluster_distance: f64,
     cluster_maxzoom: i32,
     do_coalesce: bool,
+    streaming_mode: &str,
 ) -> PyResult<String> {
     let reporter: Box<dyn ProgressReporter> = if quiet {
         Box::new(engine::SilentReporter)
     } else {
         Box::new(PyReporter)
     };
+
+    let config = TileConfig {
+        tile_format: match tile_format {
+            "mlt" => TileFormat::Mlt,
+            _ => TileFormat::Mvt,
+        },
+        min_zoom,
+        max_zoom,
+        base_zoom: if base_zoom < 0 {
+            None
+        } else {
+            Some(base_zoom as u8)
+        },
+        simplification: do_simplify,
+        drop_rate: if drop_rate > 0.0 {
+            Some(drop_rate)
+        } else {
+            None
+        },
+        cluster_distance: if cluster_distance > 0.0 {
+            Some(cluster_distance)
+        } else {
+            None
+        },
+        cluster_maxzoom: if cluster_maxzoom >= 0 {
+            Some(cluster_maxzoom as u8)
+        } else {
+            None
+        },
+        coalesce: do_coalesce,
+    };
+
+    let maybe_stream = match streaming_mode {
+        "always" => true,
+        "auto" if cluster_distance <= 0.0 => {
+            freestiler_core::streaming::query_feature_count(db_path, sql)
+                .map(|count| count >= freestiler_core::streaming::auto_threshold())
+                .unwrap_or(false)
+        }
+        _ => false,
+    };
+
+    if maybe_stream {
+        match freestiler_core::streaming::generate_pmtiles_from_duckdb_query(
+            db_path,
+            sql,
+            output_path,
+            layer_name,
+            &config,
+            reporter.as_ref(),
+        ) {
+            Ok(_) => return Ok(output_path.to_string()),
+            Err(e) => {
+                let can_fallback = streaming_mode == "auto"
+                    && (e.contains("POINT geometries only")
+                        || e.contains("does not support clustering"));
+                if !can_fallback {
+                    return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e));
+                }
+                if !quiet {
+                    reporter.report(
+                        "  Streaming unavailable for this query, falling back to in-memory tiling",
+                    );
+                }
+            }
+        }
+    }
 
     let layers = freestiler_core::file_input::duckdb_query_to_layers(
         db_path, sql, layer_name, min_zoom, max_zoom,
@@ -420,21 +500,6 @@ fn _freestile_duckdb_query(
         let total: usize = layers.iter().map(|l| l.features.len()).sum();
         reporter.report(&format!("  Query returned {} features", total));
     }
-
-    let config = TileConfig {
-        tile_format: match tile_format {
-            "mlt" => TileFormat::Mlt,
-            _ => TileFormat::Mvt,
-        },
-        min_zoom,
-        max_zoom,
-        base_zoom: if base_zoom < 0 { None } else { Some(base_zoom as u8) },
-        simplification: do_simplify,
-        drop_rate: if drop_rate > 0.0 { Some(drop_rate) } else { None },
-        cluster_distance: if cluster_distance > 0.0 { Some(cluster_distance) } else { None },
-        cluster_maxzoom: if cluster_maxzoom >= 0 { Some(cluster_maxzoom as u8) } else { None },
-        coalesce: do_coalesce,
-    };
 
     match engine::generate_pmtiles(&layers, output_path, &config, reporter.as_ref()) {
         Ok(()) => Ok(output_path.to_string()),
@@ -489,11 +554,27 @@ fn _freestile_duckdb(
         },
         min_zoom,
         max_zoom,
-        base_zoom: if base_zoom < 0 { None } else { Some(base_zoom as u8) },
+        base_zoom: if base_zoom < 0 {
+            None
+        } else {
+            Some(base_zoom as u8)
+        },
         simplification: do_simplify,
-        drop_rate: if drop_rate > 0.0 { Some(drop_rate) } else { None },
-        cluster_distance: if cluster_distance > 0.0 { Some(cluster_distance) } else { None },
-        cluster_maxzoom: if cluster_maxzoom >= 0 { Some(cluster_maxzoom as u8) } else { None },
+        drop_rate: if drop_rate > 0.0 {
+            Some(drop_rate)
+        } else {
+            None
+        },
+        cluster_distance: if cluster_distance > 0.0 {
+            Some(cluster_distance)
+        } else {
+            None
+        },
+        cluster_maxzoom: if cluster_maxzoom >= 0 {
+            Some(cluster_maxzoom as u8)
+        } else {
+            None
+        },
         coalesce: do_coalesce,
     };
 

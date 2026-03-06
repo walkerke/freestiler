@@ -100,6 +100,32 @@ def test_query_points(tmp_path, point_parquet):
 
 
 @requires_duckdb
+def test_query_points_streaming(tmp_path, point_parquet):
+    output = tmp_path / "pts_stream.pmtiles"
+    result = freestile_query(
+        f"SELECT * FROM read_parquet('{point_parquet}')",
+        output,
+        max_zoom=6,
+        quiet=True,
+        streaming="always",
+    )
+    assert result.exists()
+    assert result.stat().st_size > 0
+
+
+@requires_duckdb
+def test_query_streaming_rejects_non_points(tmp_path, parquet_file):
+    output = tmp_path / "out.pmtiles"
+    with pytest.raises(RuntimeError, match="POINT geometries only"):
+        freestile_query(
+            f"SELECT * FROM read_parquet('{parquet_file}')",
+            output,
+            quiet=True,
+            streaming="always",
+        )
+
+
+@requires_duckdb
 def test_query_with_where_clause(tmp_path, parquet_file):
     output = tmp_path / "filtered.pmtiles"
     result = freestile_query(
@@ -150,5 +176,16 @@ def test_query_invalid_format(tmp_path, parquet_file):
             f"SELECT * FROM read_parquet('{parquet_file}')",
             output,
             tile_format="xyz",
+            quiet=True,
+        )
+
+
+def test_query_invalid_streaming_mode(tmp_path, parquet_file):
+    output = tmp_path / "out.pmtiles"
+    with pytest.raises(ValueError, match="streaming"):
+        freestile_query(
+            f"SELECT * FROM read_parquet('{parquet_file}')",
+            output,
+            streaming="sometimes",
             quiet=True,
         )

@@ -1,7 +1,7 @@
 use prost::Message;
 use std::collections::HashMap;
 
-use crate::tiler::{Feature, Geometry, PropertyValue, TileCoord, tile_bounds};
+use crate::tiler::{tile_bounds, Feature, Geometry, PropertyValue, TileCoord};
 
 /// MVT tile extent (coordinate space)
 const EXTENT: u32 = 4096;
@@ -203,13 +203,7 @@ const CMD_LINE_TO: u32 = 2;
 const CMD_CLOSE_PATH: u32 = 7;
 
 /// Encode a geometry into MVT command sequence
-fn encode_geometry(
-    geom: &Geometry,
-    west: f64,
-    south: f64,
-    east: f64,
-    north: f64,
-) -> Vec<u32> {
+fn encode_geometry(geom: &Geometry, west: f64, south: f64, east: f64, north: f64) -> Vec<u32> {
     match geom {
         Geometry::Point(p) => {
             let x = lon_to_tile_coord(p.x(), west, east);
@@ -231,23 +225,31 @@ fn encode_geometry(
             }
             cmds
         }
-        Geometry::LineString(ls) => encode_linestring_cmds(ls, west, south, east, north, &mut 0, &mut 0),
+        Geometry::LineString(ls) => {
+            encode_linestring_cmds(ls, west, south, east, north, &mut 0, &mut 0)
+        }
         Geometry::MultiLineString(mls) => {
             let mut cmds = Vec::new();
             let mut cx = 0i32;
             let mut cy = 0i32;
             for ls in &mls.0 {
-                cmds.extend(encode_linestring_cmds(ls, west, south, east, north, &mut cx, &mut cy));
+                cmds.extend(encode_linestring_cmds(
+                    ls, west, south, east, north, &mut cx, &mut cy,
+                ));
             }
             cmds
         }
-        Geometry::Polygon(poly) => encode_polygon_cmds(poly, west, south, east, north, &mut 0, &mut 0),
+        Geometry::Polygon(poly) => {
+            encode_polygon_cmds(poly, west, south, east, north, &mut 0, &mut 0)
+        }
         Geometry::MultiPolygon(mp) => {
             let mut cmds = Vec::new();
             let mut cx = 0i32;
             let mut cy = 0i32;
             for poly in &mp.0 {
-                cmds.extend(encode_polygon_cmds(poly, west, south, east, north, &mut cx, &mut cy));
+                cmds.extend(encode_polygon_cmds(
+                    poly, west, south, east, north, &mut cx, &mut cy,
+                ));
             }
             cmds
         }

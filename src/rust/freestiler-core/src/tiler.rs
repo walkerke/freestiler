@@ -1,4 +1,6 @@
-use geo_types::{Coord, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon, Rect};
+use geo_types::{
+    Coord, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon, Rect,
+};
 use std::collections::HashMap;
 
 /// A feature with geometry and properties, ready for tiling
@@ -88,11 +90,21 @@ pub fn geometry_bbox(geom: &Geometry) -> Rect<f64> {
     use geo::BoundingRect;
     match geom {
         Geometry::Point(p) => Rect::new(p.0, p.0),
-        Geometry::MultiPoint(mp) => mp.bounding_rect().unwrap_or_else(|| Rect::new(Coord { x: 0.0, y: 0.0 }, Coord { x: 0.0, y: 0.0 })),
-        Geometry::LineString(ls) => ls.bounding_rect().unwrap_or_else(|| Rect::new(Coord { x: 0.0, y: 0.0 }, Coord { x: 0.0, y: 0.0 })),
-        Geometry::MultiLineString(mls) => mls.bounding_rect().unwrap_or_else(|| Rect::new(Coord { x: 0.0, y: 0.0 }, Coord { x: 0.0, y: 0.0 })),
-        Geometry::Polygon(p) => p.bounding_rect().unwrap_or_else(|| Rect::new(Coord { x: 0.0, y: 0.0 }, Coord { x: 0.0, y: 0.0 })),
-        Geometry::MultiPolygon(mp) => mp.bounding_rect().unwrap_or_else(|| Rect::new(Coord { x: 0.0, y: 0.0 }, Coord { x: 0.0, y: 0.0 })),
+        Geometry::MultiPoint(mp) => mp
+            .bounding_rect()
+            .unwrap_or_else(|| Rect::new(Coord { x: 0.0, y: 0.0 }, Coord { x: 0.0, y: 0.0 })),
+        Geometry::LineString(ls) => ls
+            .bounding_rect()
+            .unwrap_or_else(|| Rect::new(Coord { x: 0.0, y: 0.0 }, Coord { x: 0.0, y: 0.0 })),
+        Geometry::MultiLineString(mls) => mls
+            .bounding_rect()
+            .unwrap_or_else(|| Rect::new(Coord { x: 0.0, y: 0.0 }, Coord { x: 0.0, y: 0.0 })),
+        Geometry::Polygon(p) => p
+            .bounding_rect()
+            .unwrap_or_else(|| Rect::new(Coord { x: 0.0, y: 0.0 }, Coord { x: 0.0, y: 0.0 })),
+        Geometry::MultiPolygon(mp) => mp
+            .bounding_rect()
+            .unwrap_or_else(|| Rect::new(Coord { x: 0.0, y: 0.0 }, Coord { x: 0.0, y: 0.0 })),
     }
 }
 

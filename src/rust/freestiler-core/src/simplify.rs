@@ -1,7 +1,7 @@
 use geo::SimplifyVw;
 use geo_types::{Coord, LineString, MultiLineString, MultiPolygon, Point, Polygon};
 
-use crate::tiler::{Geometry, TileCoord, tile_bounds};
+use crate::tiler::{tile_bounds, Geometry, TileCoord};
 
 /// Tile coordinate extent (pixels per tile side)
 const EXTENT: f64 = 4096.0;
@@ -24,13 +24,7 @@ pub fn simplify_geometry(geom: &Geometry, coord: &TileCoord) -> Geometry {
     snap_geometry(geom, west, south, east, north)
 }
 
-fn snap_geometry(
-    geom: &Geometry,
-    west: f64,
-    south: f64,
-    east: f64,
-    north: f64,
-) -> Geometry {
+fn snap_geometry(geom: &Geometry, west: f64, south: f64, east: f64, north: f64) -> Geometry {
     // Precompute Mercator Y values for the tile bounds
     let south_merc = south.to_radians().tan().asinh();
     let north_merc = north.to_radians().tan().asinh();
@@ -40,11 +34,10 @@ fn snap_geometry(
             Geometry::Point(Point(snap_coord(&p.0, west, south_merc, east, north_merc)))
         }
         Geometry::MultiPoint(mp) => {
-            let points = mp
-                .0
-                .iter()
-                .map(|p| Point(snap_coord(&p.0, west, south_merc, east, north_merc)))
-                .collect();
+            let points =
+                mp.0.iter()
+                    .map(|p| Point(snap_coord(&p.0, west, south_merc, east, north_merc)))
+                    .collect();
             Geometry::MultiPoint(geo_types::MultiPoint(points))
         }
         Geometry::LineString(ls) => {
@@ -77,12 +70,11 @@ fn snap_geometry(
             }
         }
         Geometry::MultiPolygon(mp) => {
-            let polys: Vec<Polygon<f64>> = mp
-                .0
-                .iter()
-                .map(|p| snap_polygon(p, west, south_merc, east, north_merc))
-                .filter(|p| is_valid_polygon(p))
-                .collect();
+            let polys: Vec<Polygon<f64>> =
+                mp.0.iter()
+                    .map(|p| snap_polygon(p, west, south_merc, east, north_merc))
+                    .filter(|p| is_valid_polygon(p))
+                    .collect();
             if polys.is_empty() {
                 geom.clone()
             } else {
@@ -94,13 +86,22 @@ fn snap_geometry(
 
 /// Snap a coordinate to the nearest tile pixel position in Mercator space.
 #[inline]
-fn snap_coord(c: &Coord<f64>, west: f64, south_merc: f64, east: f64, north_merc: f64) -> Coord<f64> {
+fn snap_coord(
+    c: &Coord<f64>,
+    west: f64,
+    south_merc: f64,
+    east: f64,
+    north_merc: f64,
+) -> Coord<f64> {
     let px = ((c.x - west) / (east - west) * EXTENT).round();
     let lat_merc = c.y.to_radians().tan().asinh();
     let py = ((north_merc - lat_merc) / (north_merc - south_merc) * EXTENT).round();
     Coord {
         x: west + px / EXTENT * (east - west),
-        y: (north_merc - py / EXTENT * (north_merc - south_merc)).sinh().atan().to_degrees(),
+        y: (north_merc - py / EXTENT * (north_merc - south_merc))
+            .sinh()
+            .atan()
+            .to_degrees(),
     }
 }
 
@@ -130,7 +131,10 @@ fn snap_linestring(
         prev_py = py;
         coords.push(Coord {
             x: west + px as f64 / EXTENT * (east - west),
-            y: (north_merc - py as f64 / EXTENT * merc_range).sinh().atan().to_degrees(),
+            y: (north_merc - py as f64 / EXTENT * merc_range)
+                .sinh()
+                .atan()
+                .to_degrees(),
         });
     }
 
@@ -189,7 +193,10 @@ fn snap_ring(
         prev_py = py;
         coords.push(Coord {
             x: west + px as f64 / EXTENT * (east - west),
-            y: (north_merc - py as f64 / EXTENT * merc_range).sinh().atan().to_degrees(),
+            y: (north_merc - py as f64 / EXTENT * merc_range)
+                .sinh()
+                .atan()
+                .to_degrees(),
         });
     }
 

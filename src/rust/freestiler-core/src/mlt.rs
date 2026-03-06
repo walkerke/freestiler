@@ -1,7 +1,7 @@
 use integer_encoding::VarInt;
 use std::collections::HashMap;
 
-use crate::tiler::{Feature, Geometry, PropertyValue, TileCoord, tile_bounds};
+use crate::tiler::{tile_bounds, Feature, Geometry, PropertyValue, TileCoord};
 
 /// MLT tile extent
 const EXTENT: u32 = 4096;
@@ -32,17 +32,17 @@ const GEOM_MULTI_POLYGON: u8 = 5;
 // PhysicalStreamType ordinals (upper nibble of byte 0)
 // Enum order: PRESENT=0, DATA=1, OFFSET=2, LENGTH=3
 const STREAM_PRESENT: u8 = 0; // ordinal 0
-const STREAM_DATA: u8 = 1;    // ordinal 1
-const STREAM_OFFSET: u8 = 2;  // ordinal 2
-const STREAM_LENGTH: u8 = 3;  // ordinal 3
+const STREAM_DATA: u8 = 1; // ordinal 1
+const STREAM_OFFSET: u8 = 2; // ordinal 2
+const STREAM_LENGTH: u8 = 3; // ordinal 3
 
 // DictionaryType ordinals (lower nibble of byte 0, when stream type = DATA)
 // Enum order: NONE=0, SINGLE=1, SHARED=2, VERTEX=3, MORTON=4, FSST=5
-const DATA_NONE: u8 = 0;   // DictionaryType.NONE
+const DATA_NONE: u8 = 0; // DictionaryType.NONE
 const DATA_SINGLE: u8 = 1; // DictionaryType.SINGLE
 const DATA_VERTEX: u8 = 3; // DictionaryType.VERTEX
 #[allow(dead_code)] // used only with fsst feature
-const DATA_FSST: u8 = 5;   // DictionaryType.FSST
+const DATA_FSST: u8 = 5; // DictionaryType.FSST
 
 // OffsetType ordinals (lower nibble of byte 0, when stream type = OFFSET)
 // Enum order: VERTEX=0, INDEX=1, STRING=2, KEY=3
@@ -257,10 +257,7 @@ pub fn encode_tile(
 
     // --- ID stream (delta-encoded unsigned varints) ---
     {
-        let ids: Vec<u64> = features
-            .iter()
-            .map(|f| f.id.unwrap_or(0))
-            .collect();
+        let ids: Vec<u64> = features.iter().map(|f| f.id.unwrap_or(0)).collect();
         // Delta encode: output differences between consecutive IDs
         let mut deltas = Vec::with_capacity(ids.len());
         let mut prev = 0u64;
@@ -269,7 +266,16 @@ pub fn encode_tile(
             prev = id;
         }
         let id_bytes = encode_varint_u64_stream(&deltas);
-        write_stream_meta(&mut layer_data, STREAM_DATA, DATA_NONE, LOG_DELTA, LOG_NONE, PHYS_VARINT, ids.len(), id_bytes.len());
+        write_stream_meta(
+            &mut layer_data,
+            STREAM_DATA,
+            DATA_NONE,
+            LOG_DELTA,
+            LOG_NONE,
+            PHYS_VARINT,
+            ids.len(),
+            id_bytes.len(),
+        );
         layer_data.extend(&id_bytes);
     }
 
@@ -278,31 +284,35 @@ pub fn encode_tile(
     let geom_stream_count = count_geometry_streams(features);
     write_varint_usize(&mut layer_data, geom_stream_count);
 
-    encode_geometry_streams(
-        &mut layer_data,
-        features,
-        west, south, east, north,
-    );
+    encode_geometry_streams(&mut layer_data, features, west, south, east, north);
 
     // --- Property streams ---
     for (i, _name) in property_names.iter().enumerate() {
         let col_type = infer_column_type(features, i);
         // STRING columns need a stream count varint (hasStreamCount = true)
         if col_type == COL_STR || col_type == COL_OPT_STR {
-            let has_nulls = features.iter().any(|f| {
-                i >= f.properties.len() || matches!(f.properties[i], PropertyValue::Null)
-            });
+            let has_nulls = features
+                .iter()
+                .any(|f| i >= f.properties.len() || matches!(f.properties[i], PropertyValue::Null));
             let use_dict = should_use_dictionary(features, i);
             // presence stream (if nullable) + encoding streams
             // dictionary: 3 streams (dict lengths, dict data, indices)
             // dictionary + FSST: 5 streams (sym lengths, sym data, dict lengths, dict data, indices)
             // raw: 2 streams (lengths, data)
             let encoding_streams: usize = if use_dict {
-                if will_use_fsst(features, i) { 5 } else { 3 }
+                if will_use_fsst(features, i) {
+                    5
+                } else {
+                    3
+                }
             } else {
                 2
             };
-            let stream_count = if has_nulls { encoding_streams + 1 } else { encoding_streams };
+            let stream_count = if has_nulls {
+                encoding_streams + 1
+            } else {
+                encoding_streams
+            };
             write_varint_usize(&mut layer_data, stream_count);
         }
         encode_property_stream(&mut layer_data, features, i);
@@ -343,13 +353,29 @@ fn infer_column_type(features: &[Feature], prop_idx: usize) -> u8 {
 
     // Priority: string > double > int > bool
     if has_string {
-        if has_null { COL_OPT_STR } else { COL_STR }
+        if has_null {
+            COL_OPT_STR
+        } else {
+            COL_STR
+        }
     } else if has_double {
-        if has_null { COL_OPT_F64 } else { COL_F64 }
+        if has_null {
+            COL_OPT_F64
+        } else {
+            COL_F64
+        }
     } else if has_int {
-        if has_null { COL_OPT_I64 } else { COL_I64 }
+        if has_null {
+            COL_OPT_I64
+        } else {
+            COL_I64
+        }
     } else if has_bool {
-        if has_null { COL_OPT_BOOL } else { COL_BOOL }
+        if has_null {
+            COL_OPT_BOOL
+        } else {
+            COL_BOOL
+        }
     } else {
         COL_OPT_STR // all nulls
     }
@@ -366,18 +392,38 @@ fn count_geometry_streams(features: &[Feature]) -> usize {
     for f in features {
         match &f.geometry {
             Geometry::Point(_) => {}
-            Geometry::MultiPoint(_) => { has_multi = true; }
-            Geometry::LineString(_) => { has_parts = true; }
-            Geometry::MultiLineString(_) => { has_multi = true; has_parts = true; }
-            Geometry::Polygon(_) => { has_parts = true; has_rings = true; }
-            Geometry::MultiPolygon(_) => { has_multi = true; has_parts = true; has_rings = true; }
+            Geometry::MultiPoint(_) => {
+                has_multi = true;
+            }
+            Geometry::LineString(_) => {
+                has_parts = true;
+            }
+            Geometry::MultiLineString(_) => {
+                has_multi = true;
+                has_parts = true;
+            }
+            Geometry::Polygon(_) => {
+                has_parts = true;
+                has_rings = true;
+            }
+            Geometry::MultiPolygon(_) => {
+                has_multi = true;
+                has_parts = true;
+                has_rings = true;
+            }
         }
     }
 
     let mut count = 2; // geom_type + vertex
-    if has_multi { count += 1; }
-    if has_parts { count += 1; }
-    if has_rings { count += 1; }
+    if has_multi {
+        count += 1;
+    }
+    if has_parts {
+        count += 1;
+    }
+    if has_rings {
+        count += 1;
+    }
     count
 }
 
@@ -393,17 +439,40 @@ fn encode_geometry_streams(
 
     // 1. Geometry type stream — encoded as u32 varints (matching reference encoder).
     //    Reference uses StreamType::Length(VarBinary), not Data(None).
-    let geom_types: Vec<u32> = features.iter().map(|f| geometry_type_byte(&f.geometry) as u32).collect();
+    let geom_types: Vec<u32> = features
+        .iter()
+        .map(|f| geometry_type_byte(&f.geometry) as u32)
+        .collect();
     let geom_type_runs = count_runs(&geom_types);
     if geom_type_runs * 2 < geom_types.len() {
         // Integer RLE: two-buffer [run_lengths..., values...] as varints
         // num_values = physical buffer count (num_runs * 2), not logical feature count
         let (rle_bytes, num_runs, num_rle_values) = integer_rle_encode_u32(&geom_types);
-        write_stream_meta_rle(out, STREAM_LENGTH, LENGTH_VAR_BINARY, LOG_RLE, LOG_NONE, PHYS_VARINT, num_runs * 2, rle_bytes.len(), num_runs, num_rle_values);
+        write_stream_meta_rle(
+            out,
+            STREAM_LENGTH,
+            LENGTH_VAR_BINARY,
+            LOG_RLE,
+            LOG_NONE,
+            PHYS_VARINT,
+            num_runs * 2,
+            rle_bytes.len(),
+            num_runs,
+            num_rle_values,
+        );
         out.extend(&rle_bytes);
     } else {
         let bytes = encode_varint_u32_stream(&geom_types);
-        write_stream_meta(out, STREAM_LENGTH, LENGTH_VAR_BINARY, LOG_NONE, LOG_NONE, PHYS_VARINT, n, bytes.len());
+        write_stream_meta(
+            out,
+            STREAM_LENGTH,
+            LENGTH_VAR_BINARY,
+            LOG_NONE,
+            LOG_NONE,
+            PHYS_VARINT,
+            n,
+            bytes.len(),
+        );
         out.extend(&bytes);
     }
 
@@ -417,7 +486,10 @@ fn encode_geometry_streams(
     for feature in features {
         collect_geometry_data(
             &feature.geometry,
-            west, south, east, north,
+            west,
+            south,
+            east,
+            north,
             &mut num_geometries,
             &mut num_parts,
             &mut num_rings,
@@ -431,11 +503,31 @@ fn encode_geometry_streams(
         let runs = count_runs(&num_geometries);
         if runs * 2 < num_geometries.len() {
             let (rle_bytes, num_runs, num_rle_values) = integer_rle_encode_u32(&num_geometries);
-            write_stream_meta_rle(out, STREAM_LENGTH, LENGTH_GEOMETRIES, LOG_RLE, LOG_NONE, PHYS_VARINT, num_runs * 2, rle_bytes.len(), num_runs, num_rle_values);
+            write_stream_meta_rle(
+                out,
+                STREAM_LENGTH,
+                LENGTH_GEOMETRIES,
+                LOG_RLE,
+                LOG_NONE,
+                PHYS_VARINT,
+                num_runs * 2,
+                rle_bytes.len(),
+                num_runs,
+                num_rle_values,
+            );
             out.extend(&rle_bytes);
         } else {
             let (bytes, phys) = encode_u32_stream_best(&num_geometries);
-            write_stream_meta(out, STREAM_LENGTH, LENGTH_GEOMETRIES, LOG_NONE, LOG_NONE, phys, num_geometries.len(), bytes.len());
+            write_stream_meta(
+                out,
+                STREAM_LENGTH,
+                LENGTH_GEOMETRIES,
+                LOG_NONE,
+                LOG_NONE,
+                phys,
+                num_geometries.len(),
+                bytes.len(),
+            );
             out.extend(&bytes);
         }
     }
@@ -445,11 +537,31 @@ fn encode_geometry_streams(
         let runs = count_runs(&num_parts);
         if runs * 2 < num_parts.len() {
             let (rle_bytes, num_runs, num_rle_values) = integer_rle_encode_u32(&num_parts);
-            write_stream_meta_rle(out, STREAM_LENGTH, LENGTH_PARTS, LOG_RLE, LOG_NONE, PHYS_VARINT, num_runs * 2, rle_bytes.len(), num_runs, num_rle_values);
+            write_stream_meta_rle(
+                out,
+                STREAM_LENGTH,
+                LENGTH_PARTS,
+                LOG_RLE,
+                LOG_NONE,
+                PHYS_VARINT,
+                num_runs * 2,
+                rle_bytes.len(),
+                num_runs,
+                num_rle_values,
+            );
             out.extend(&rle_bytes);
         } else {
             let (bytes, phys) = encode_u32_stream_best(&num_parts);
-            write_stream_meta(out, STREAM_LENGTH, LENGTH_PARTS, LOG_NONE, LOG_NONE, phys, num_parts.len(), bytes.len());
+            write_stream_meta(
+                out,
+                STREAM_LENGTH,
+                LENGTH_PARTS,
+                LOG_NONE,
+                LOG_NONE,
+                phys,
+                num_parts.len(),
+                bytes.len(),
+            );
             out.extend(&bytes);
         }
     }
@@ -459,11 +571,31 @@ fn encode_geometry_streams(
         let runs = count_runs(&num_rings);
         if runs * 2 < num_rings.len() {
             let (rle_bytes, num_runs, num_rle_values) = integer_rle_encode_u32(&num_rings);
-            write_stream_meta_rle(out, STREAM_LENGTH, LENGTH_RINGS, LOG_RLE, LOG_NONE, PHYS_VARINT, num_runs * 2, rle_bytes.len(), num_runs, num_rle_values);
+            write_stream_meta_rle(
+                out,
+                STREAM_LENGTH,
+                LENGTH_RINGS,
+                LOG_RLE,
+                LOG_NONE,
+                PHYS_VARINT,
+                num_runs * 2,
+                rle_bytes.len(),
+                num_runs,
+                num_rle_values,
+            );
             out.extend(&rle_bytes);
         } else {
             let (bytes, phys) = encode_u32_stream_best(&num_rings);
-            write_stream_meta(out, STREAM_LENGTH, LENGTH_RINGS, LOG_NONE, LOG_NONE, phys, num_rings.len(), bytes.len());
+            write_stream_meta(
+                out,
+                STREAM_LENGTH,
+                LENGTH_RINGS,
+                LOG_NONE,
+                LOG_NONE,
+                phys,
+                num_rings.len(),
+                bytes.len(),
+            );
             out.extend(&bytes);
         }
     }
@@ -480,7 +612,16 @@ fn encode_geometry_streams(
             interleaved_zigzag.push(zigzag_encode_i32(dy[i]));
         }
         let (bytes, phys) = encode_u32_stream_best(&interleaved_zigzag);
-        write_stream_meta(out, STREAM_DATA, DATA_VERTEX, LOG_COMPONENTWISE_DELTA, LOG_NONE, phys, total_vertices * 2, bytes.len());
+        write_stream_meta(
+            out,
+            STREAM_DATA,
+            DATA_VERTEX,
+            LOG_COMPONENTWISE_DELTA,
+            LOG_NONE,
+            phys,
+            total_vertices * 2,
+            bytes.len(),
+        );
         out.extend(&bytes);
     }
 }
@@ -558,11 +699,12 @@ fn collect_geometry_data(
             }
             // Interior rings
             for interior in poly.interiors() {
-                let int_coords: Vec<_> = if interior.0.len() >= 2 && interior.0.first() == interior.0.last() {
-                    interior.0[..interior.0.len() - 1].to_vec()
-                } else {
-                    interior.0.clone()
-                };
+                let int_coords: Vec<_> =
+                    if interior.0.len() >= 2 && interior.0.first() == interior.0.last() {
+                        interior.0[..interior.0.len() - 1].to_vec()
+                    } else {
+                        interior.0.clone()
+                    };
                 num_rings.push(int_coords.len() as u32);
                 for c in &int_coords {
                     vertices_x.push(lon_to_tile_coord(c.x, west, east));
@@ -587,11 +729,12 @@ fn collect_geometry_data(
                     vertices_y.push(lat_to_tile_coord(c.y, south, north));
                 }
                 for interior in poly.interiors() {
-                    let int_coords: Vec<_> = if interior.0.len() >= 2 && interior.0.first() == interior.0.last() {
-                        interior.0[..interior.0.len() - 1].to_vec()
-                    } else {
-                        interior.0.clone()
-                    };
+                    let int_coords: Vec<_> =
+                        if interior.0.len() >= 2 && interior.0.first() == interior.0.last() {
+                            interior.0[..interior.0.len() - 1].to_vec()
+                        } else {
+                            interior.0.clone()
+                        };
                     num_rings.push(int_coords.len() as u32);
                     for c in &int_coords {
                         vertices_x.push(lon_to_tile_coord(c.x, west, east));
@@ -603,6 +746,28 @@ fn collect_geometry_data(
     }
 }
 
+fn property_value_as_string(value: &PropertyValue) -> Option<String> {
+    match value {
+        PropertyValue::String(s) => Some(s.clone()),
+        PropertyValue::Int(v) => Some(v.to_string()),
+        PropertyValue::Double(v) => Some(v.to_string()),
+        PropertyValue::Bool(v) => Some(v.to_string()),
+        PropertyValue::Null => None,
+    }
+}
+
+/// Collect non-null string values for a property column. This must stay aligned
+/// with `encode_property_stream` so stream-count prediction matches the payload.
+fn collect_string_values(features: &[Feature], prop_idx: usize) -> Vec<String> {
+    features
+        .iter()
+        .filter_map(|f| {
+            let value = f.properties.get(prop_idx).unwrap_or(&PropertyValue::Null);
+            property_value_as_string(value)
+        })
+        .collect()
+}
+
 /// Check if dictionary encoding would be cheaper for a string column.
 /// Mirrors the logic in encode_property_stream to avoid duplication.
 fn should_use_dictionary(features: &[Feature], prop_idx: usize) -> bool {
@@ -611,38 +776,31 @@ fn should_use_dictionary(features: &[Feature], prop_idx: usize) -> bool {
         return false;
     }
 
-    let mut string_values: Vec<&str> = Vec::new();
-    for f in features {
-        let val = if prop_idx < f.properties.len() {
-            &f.properties[prop_idx]
-        } else {
-            &PropertyValue::Null
-        };
-        if let PropertyValue::String(s) = val {
-            string_values.push(s.as_str());
-        }
-    }
+    let string_values = collect_string_values(features, prop_idx);
 
     if string_values.is_empty() {
         return false;
     }
 
     // Raw cost estimate
-    let raw_len_bytes: usize = string_values.iter().map(|s| {
-        let mut buf = [0u8; 5];
-        (s.len() as u32).encode_var(&mut buf)
-    }).sum();
+    let raw_len_bytes: usize = string_values
+        .iter()
+        .map(|s| {
+            let mut buf = [0u8; 5];
+            (s.len() as u32).encode_var(&mut buf)
+        })
+        .sum();
     let raw_data_bytes: usize = string_values.iter().map(|s| s.len()).sum();
     let raw_cost = raw_len_bytes + raw_data_bytes + 8;
 
     // Dictionary cost estimate
     let mut unique_map: HashMap<&str, u32> = HashMap::new();
     let mut dict_entries: Vec<&str> = Vec::new();
-    for &s in &string_values {
-        if !unique_map.contains_key(s) {
+    for s in &string_values {
+        if !unique_map.contains_key(s.as_str()) {
             let idx = dict_entries.len() as u32;
-            unique_map.insert(s, idx);
-            dict_entries.push(s);
+            unique_map.insert(s.as_str(), idx);
+            dict_entries.push(s.as_str());
         }
     }
 
@@ -651,24 +809,26 @@ fn should_use_dictionary(features: &[Feature], prop_idx: usize) -> bool {
     }
 
     let dict_data_bytes: usize = dict_entries.iter().map(|s| s.len()).sum();
-    let dict_len_bytes: usize = dict_entries.iter().map(|s| {
-        let mut buf = [0u8; 5];
-        (s.len() as u32).encode_var(&mut buf)
-    }).sum();
-    let index_bytes: usize = string_values.iter().map(|s| {
-        let mut buf = [0u8; 5];
-        unique_map[s].encode_var(&mut buf)
-    }).sum();
+    let dict_len_bytes: usize = dict_entries
+        .iter()
+        .map(|s| {
+            let mut buf = [0u8; 5];
+            (s.len() as u32).encode_var(&mut buf)
+        })
+        .sum();
+    let index_bytes: usize = string_values
+        .iter()
+        .map(|s| {
+            let mut buf = [0u8; 5];
+            unique_map[s.as_str()].encode_var(&mut buf)
+        })
+        .sum();
     let dict_cost = dict_len_bytes + dict_data_bytes + index_bytes + 12;
 
     dict_cost < raw_cost
 }
 
-fn encode_property_stream(
-    out: &mut Vec<u8>,
-    features: &[Feature],
-    prop_idx: usize,
-) {
+fn encode_property_stream(out: &mut Vec<u8>, features: &[Feature], prop_idx: usize) {
     let n = features.len();
 
     // Check if any nulls
@@ -681,7 +841,8 @@ fn encode_property_stream(
         let mut bitmap = Vec::new();
         let mut byte: u8 = 0;
         for (i, f) in features.iter().enumerate() {
-            let present = prop_idx < f.properties.len() && !matches!(f.properties[prop_idx], PropertyValue::Null);
+            let present = prop_idx < f.properties.len()
+                && !matches!(f.properties[prop_idx], PropertyValue::Null);
             if present {
                 byte |= 1 << (i % 8);
             }
@@ -695,7 +856,16 @@ fn encode_property_stream(
         // For is_bool=true, RLE metadata (runs, num_rle_values) is NOT in the wire format
         // — the decoder computes them from num_values and byte_length.
         let rle_data = byte_rle_encode(&bitmap);
-        write_stream_meta(out, STREAM_PRESENT, 0, LOG_RLE, LOG_NONE, PHYS_NONE, n, rle_data.len());
+        write_stream_meta(
+            out,
+            STREAM_PRESENT,
+            0,
+            LOG_RLE,
+            LOG_NONE,
+            PHYS_NONE,
+            n,
+            rle_data.len(),
+        );
         out.extend(&rle_data);
     }
 
@@ -703,20 +873,7 @@ fn encode_property_stream(
     let col_type = infer_column_type(features, prop_idx);
     match col_type {
         COL_STR | COL_OPT_STR => {
-            // Collect non-null string values
-            let mut string_values: Vec<String> = Vec::new();
-            for f in features {
-                let val = if prop_idx < f.properties.len() {
-                    &f.properties[prop_idx]
-                } else {
-                    &PropertyValue::Null
-                };
-                match val {
-                    PropertyValue::String(s) => string_values.push(s.clone()),
-                    PropertyValue::Null => {}
-                    other => string_values.push(format!("{:?}", other)),
-                }
-            }
+            let string_values = collect_string_values(features, prop_idx);
 
             // Estimate raw encoding cost
             let raw_lengths: Vec<u32> = string_values.iter().map(|s| s.len() as u32).collect();
@@ -738,21 +895,48 @@ fn encode_property_stream(
             let dict_data_bytes: usize = dict_entries.iter().map(|s| s.len()).sum();
             let dict_lengths: Vec<u32> = dict_entries.iter().map(|s| s.len() as u32).collect();
             let dict_len_encoded = encode_varint_u32_stream(&dict_lengths);
-            let indices: Vec<u32> = string_values.iter().map(|s| unique_map[s.as_str()]).collect();
+            let indices: Vec<u32> = string_values
+                .iter()
+                .map(|s| unique_map[s.as_str()])
+                .collect();
             let index_encoded = encode_varint_u32_stream(&indices);
             // 3 streams: dict lengths, dict data, indices (each ~4 bytes header)
             let dict_cost = dict_len_encoded.len() + dict_data_bytes + index_encoded.len() + 12;
 
             if dict_cost < raw_cost && dict_entries.len() < string_values.len() {
                 // Dictionary encoding wins
-                encode_dictionary_streams(out, &dict_entries, &dict_lengths, dict_data_bytes, &indices);
+                encode_dictionary_streams(
+                    out,
+                    &dict_entries,
+                    &dict_lengths,
+                    dict_data_bytes,
+                    &indices,
+                );
             } else {
                 // Raw encoding
                 let (len_bytes, len_phys) = encode_u32_stream_best(&raw_lengths);
-                write_stream_meta(out, STREAM_LENGTH, LENGTH_VAR_BINARY, LOG_NONE, LOG_NONE, len_phys, raw_lengths.len(), len_bytes.len());
+                write_stream_meta(
+                    out,
+                    STREAM_LENGTH,
+                    LENGTH_VAR_BINARY,
+                    LOG_NONE,
+                    LOG_NONE,
+                    len_phys,
+                    raw_lengths.len(),
+                    len_bytes.len(),
+                );
                 out.extend(&len_bytes);
                 // num_values = number of strings, byte_length = total concatenated byte count
-                write_stream_meta(out, STREAM_DATA, DATA_NONE, LOG_NONE, LOG_NONE, PHYS_NONE, string_values.len(), raw_data_bytes);
+                write_stream_meta(
+                    out,
+                    STREAM_DATA,
+                    DATA_NONE,
+                    LOG_NONE,
+                    LOG_NONE,
+                    PHYS_NONE,
+                    string_values.len(),
+                    raw_data_bytes,
+                );
                 let mut raw_string_data = Vec::with_capacity(raw_data_bytes);
                 for s in &string_values {
                     raw_string_data.extend(s.as_bytes());
@@ -779,7 +963,16 @@ fn encode_property_stream(
                 })
                 .collect();
             let bytes = encode_zigzag_varint_i64_stream(&vals);
-            write_stream_meta(out, STREAM_DATA, DATA_NONE, LOG_NONE, LOG_NONE, PHYS_VARINT, vals.len(), bytes.len());
+            write_stream_meta(
+                out,
+                STREAM_DATA,
+                DATA_NONE,
+                LOG_NONE,
+                LOG_NONE,
+                PHYS_VARINT,
+                vals.len(),
+                bytes.len(),
+            );
             out.extend(&bytes);
         }
         COL_F64 | COL_OPT_F64 => {
@@ -802,7 +995,16 @@ fn encode_property_stream(
             for v in &vals {
                 bytes.extend(&v.to_le_bytes());
             }
-            write_stream_meta(out, STREAM_DATA, DATA_NONE, LOG_NONE, LOG_NONE, PHYS_NONE, vals.len(), bytes.len());
+            write_stream_meta(
+                out,
+                STREAM_DATA,
+                DATA_NONE,
+                LOG_NONE,
+                LOG_NONE,
+                PHYS_NONE,
+                vals.len(),
+                bytes.len(),
+            );
             out.extend(&bytes);
         }
         COL_BOOL | COL_OPT_BOOL => {
@@ -826,7 +1028,16 @@ fn encode_property_stream(
             if count % 8 != 0 {
                 bitmap.push(byte);
             }
-            write_stream_meta(out, STREAM_DATA, DATA_NONE, LOG_NONE, LOG_NONE, PHYS_NONE, count, bitmap.len());
+            write_stream_meta(
+                out,
+                STREAM_DATA,
+                DATA_NONE,
+                LOG_NONE,
+                LOG_NONE,
+                PHYS_NONE,
+                count,
+                bitmap.len(),
+            );
             out.extend(&bitmap);
         }
         _ => {}
@@ -837,24 +1048,21 @@ fn encode_property_stream(
 /// Must mirror the decision in encode_dictionary_streams.
 fn will_use_fsst(features: &[Feature], prop_idx: usize) -> bool {
     #[cfg(not(feature = "fsst"))]
-    { let _ = (features, prop_idx); return false; }
+    {
+        let _ = (features, prop_idx);
+        return false;
+    }
 
     #[cfg(feature = "fsst")]
     {
+        let string_values = collect_string_values(features, prop_idx);
         let mut unique_map: HashMap<&str, u32> = HashMap::new();
         let mut dict_entries: Vec<&str> = Vec::new();
-        for f in features {
-            let val = if prop_idx < f.properties.len() {
-                &f.properties[prop_idx]
-            } else {
-                &PropertyValue::Null
-            };
-            if let PropertyValue::String(s) = val {
-                if !unique_map.contains_key(s.as_str()) {
-                    let idx = dict_entries.len() as u32;
-                    unique_map.insert(s.as_str(), idx);
-                    dict_entries.push(s.as_str());
-                }
+        for s in &string_values {
+            if !unique_map.contains_key(s.as_str()) {
+                let idx = dict_entries.len() as u32;
+                unique_map.insert(s.as_str(), idx);
+                dict_entries.push(s.as_str());
             }
         }
         try_fsst_dictionary(&dict_entries).is_some()
@@ -875,34 +1083,112 @@ fn encode_dictionary_streams(
         // FSST + dictionary: 5 streams
         // Stream 1: symbol lengths (LENGTH/SYMBOL)
         let (sym_len_bytes, sym_len_phys) = encode_u32_stream_best(&fsst_enc.symbol_lengths);
-        write_stream_meta(out, STREAM_LENGTH, LENGTH_SYMBOL, LOG_NONE, LOG_NONE, sym_len_phys, fsst_enc.symbol_lengths.len(), sym_len_bytes.len());
+        write_stream_meta(
+            out,
+            STREAM_LENGTH,
+            LENGTH_SYMBOL,
+            LOG_NONE,
+            LOG_NONE,
+            sym_len_phys,
+            fsst_enc.symbol_lengths.len(),
+            sym_len_bytes.len(),
+        );
         out.extend(&sym_len_bytes);
         // Stream 2: symbol table data (DATA/FSST)
-        write_stream_meta(out, STREAM_DATA, DATA_FSST, LOG_NONE, LOG_NONE, PHYS_NONE, fsst_enc.symbol_lengths.len(), fsst_enc.symbol_data.len());
+        write_stream_meta(
+            out,
+            STREAM_DATA,
+            DATA_FSST,
+            LOG_NONE,
+            LOG_NONE,
+            PHYS_NONE,
+            fsst_enc.symbol_lengths.len(),
+            fsst_enc.symbol_data.len(),
+        );
         out.extend(&fsst_enc.symbol_data);
         // Stream 3: original UTF-8 byte lengths per dict entry (LENGTH/DICTIONARY)
         let (val_len_bytes, val_len_phys) = encode_u32_stream_best(&fsst_enc.value_lengths);
-        write_stream_meta(out, STREAM_LENGTH, LENGTH_DICTIONARY, LOG_NONE, LOG_NONE, val_len_phys, fsst_enc.value_lengths.len(), val_len_bytes.len());
+        write_stream_meta(
+            out,
+            STREAM_LENGTH,
+            LENGTH_DICTIONARY,
+            LOG_NONE,
+            LOG_NONE,
+            val_len_phys,
+            fsst_enc.value_lengths.len(),
+            val_len_bytes.len(),
+        );
         out.extend(&val_len_bytes);
         // Stream 4: FSST-compressed dictionary data (DATA/SINGLE)
-        write_stream_meta(out, STREAM_DATA, DATA_SINGLE, LOG_NONE, LOG_NONE, PHYS_NONE, dict_entries.len(), fsst_enc.compressed_data.len());
+        write_stream_meta(
+            out,
+            STREAM_DATA,
+            DATA_SINGLE,
+            LOG_NONE,
+            LOG_NONE,
+            PHYS_NONE,
+            dict_entries.len(),
+            fsst_enc.compressed_data.len(),
+        );
         out.extend(&fsst_enc.compressed_data);
         // Stream 5: per-feature indices (OFFSET/STRING)
         let (idx_bytes, idx_phys) = encode_u32_stream_best(indices);
-        write_stream_meta(out, STREAM_OFFSET, OFFSET_STRING, LOG_NONE, LOG_NONE, idx_phys, indices.len(), idx_bytes.len());
+        write_stream_meta(
+            out,
+            STREAM_OFFSET,
+            OFFSET_STRING,
+            LOG_NONE,
+            LOG_NONE,
+            idx_phys,
+            indices.len(),
+            idx_bytes.len(),
+        );
         out.extend(&idx_bytes);
         return;
     }
 
     // Plain dictionary encoding: 3 streams
     let (dl_bytes, dl_phys) = encode_u32_stream_best(dict_lengths);
-    write_stream_meta(out, STREAM_LENGTH, LENGTH_DICTIONARY, LOG_NONE, LOG_NONE, dl_phys, dict_lengths.len(), dl_bytes.len());
+    write_stream_meta(
+        out,
+        STREAM_LENGTH,
+        LENGTH_DICTIONARY,
+        LOG_NONE,
+        LOG_NONE,
+        dl_phys,
+        dict_lengths.len(),
+        dl_bytes.len(),
+    );
     out.extend(&dl_bytes);
     // num_values = number of dictionary entries, byte_length = total concatenated byte count
-    write_stream_meta(out, STREAM_DATA, DATA_SINGLE, LOG_NONE, LOG_NONE, PHYS_NONE, dict_entries.len(), dict_data_bytes);
-    out.extend(dict_entries.iter().flat_map(|s| s.as_bytes()).copied().collect::<Vec<u8>>());
+    write_stream_meta(
+        out,
+        STREAM_DATA,
+        DATA_SINGLE,
+        LOG_NONE,
+        LOG_NONE,
+        PHYS_NONE,
+        dict_entries.len(),
+        dict_data_bytes,
+    );
+    out.extend(
+        dict_entries
+            .iter()
+            .flat_map(|s| s.as_bytes())
+            .copied()
+            .collect::<Vec<u8>>(),
+    );
     let (idx_bytes, idx_phys) = encode_u32_stream_best(indices);
-    write_stream_meta(out, STREAM_OFFSET, OFFSET_STRING, LOG_NONE, LOG_NONE, idx_phys, indices.len(), idx_bytes.len());
+    write_stream_meta(
+        out,
+        STREAM_OFFSET,
+        OFFSET_STRING,
+        LOG_NONE,
+        LOG_NONE,
+        idx_phys,
+        indices.len(),
+        idx_bytes.len(),
+    );
     out.extend(&idx_bytes);
 }
 
@@ -1012,10 +1298,13 @@ fn try_fsst_dictionary(dict_entries: &[&str]) -> Option<FsstEncoded> {
     // The FSST path adds two extra streams (symbol lengths + symbol data) vs plain dict,
     // each with ~6 bytes of stream header overhead. Account for the encoded symbol
     // lengths too (varint-encoded u32 per symbol).
-    let sym_len_encoded_size: usize = symbol_lengths.iter().map(|&l| {
-        let mut buf = [0u8; 5];
-        l.encode_var(&mut buf)
-    }).sum();
+    let sym_len_encoded_size: usize = symbol_lengths
+        .iter()
+        .map(|&l| {
+            let mut buf = [0u8; 5];
+            l.encode_var(&mut buf)
+        })
+        .sum();
     let fsst_overhead = symbol_data.len() + sym_len_encoded_size + 12; // ~6 bytes per extra stream header
     if compressed_data.len() + fsst_overhead >= total_bytes {
         return None;
@@ -1304,15 +1593,15 @@ mod tests {
         let mut buf = Vec::new();
         write_stream_meta_rle(
             &mut buf,
-            STREAM_LENGTH,    // physicalStreamType
-            LENGTH_PARTS,     // logicalSubtype
-            LOG_RLE,          // logicalTechnique1
-            LOG_NONE,         // logicalTechnique2
-            PHYS_VARINT,      // physicalTechnique
-            100,              // numValues
-            5,                // byteLength
-            1,                // numRuns
-            100,              // numRleValues
+            STREAM_LENGTH, // physicalStreamType
+            LENGTH_PARTS,  // logicalSubtype
+            LOG_RLE,       // logicalTechnique1
+            LOG_NONE,      // logicalTechnique2
+            PHYS_VARINT,   // physicalTechnique
+            100,           // numValues
+            5,             // byteLength
+            1,             // numRuns
+            100,           // numRleValues
         );
         // byte 0: (STREAM_LENGTH << 4) | LENGTH_PARTS = (3 << 4) | 2 = 0x32
         assert_eq!(buf[0], 0x32);
@@ -1347,10 +1636,10 @@ mod tests {
             LOG_RLE,
             LOG_NONE,
             PHYS_NONE,
-            50,  // numValues
-            2,   // byteLength
-            1,   // numRuns
-            50,  // numRleValues
+            50, // numValues
+            2,  // byteLength
+            1,  // numRuns
+            50, // numRleValues
         );
         // byte 0: (STREAM_DATA << 4) | DATA_NONE = (1 << 4) | 0 = 0x10
         assert_eq!(buf[0], 0x10);
@@ -1384,9 +1673,9 @@ mod tests {
             .map(|i| Feature {
                 id: Some(i as u64),
                 geometry: Geometry::Point(Point::new(0.0, 0.0)),
-                properties: vec![
-                    PropertyValue::String(["urban", "rural", "suburban"][i % 3].to_string()),
-                ],
+                properties: vec![PropertyValue::String(
+                    ["urban", "rural", "suburban"][i % 3].to_string(),
+                )],
             })
             .collect();
 
@@ -1402,13 +1691,40 @@ mod tests {
             .map(|i| Feature {
                 id: Some(i as u64),
                 geometry: Geometry::Point(Point::new(0.0, 0.0)),
-                properties: vec![
-                    PropertyValue::String(format!("unique_{}", i)),
-                ],
+                properties: vec![PropertyValue::String(format!("unique_{}", i))],
             })
             .collect();
 
         assert!(!should_use_dictionary(&features, 0));
+    }
+
+    #[test]
+    fn test_collect_string_values_coerces_mixed_string_column_consistently() {
+        use crate::tiler::{Feature, Geometry, PropertyValue};
+        use geo_types::Point;
+
+        let features = vec![
+            Feature {
+                id: Some(1),
+                geometry: Geometry::Point(Point::new(0.0, 0.0)),
+                properties: vec![PropertyValue::String("31-33".to_string())],
+            },
+            Feature {
+                id: Some(2),
+                geometry: Geometry::Point(Point::new(0.0, 0.0)),
+                properties: vec![PropertyValue::Int(5112)],
+            },
+            Feature {
+                id: Some(3),
+                geometry: Geometry::Point(Point::new(0.0, 0.0)),
+                properties: vec![PropertyValue::Null],
+            },
+        ];
+
+        assert_eq!(
+            collect_string_values(&features, 0),
+            vec!["31-33".to_string(), "5112".to_string()]
+        );
     }
 
     // --- count_runs validation ---
@@ -1437,7 +1753,10 @@ mod tests {
     /// num_values, byte_length, total_header_bytes).
     /// MLT spec: ALL non-bool RLE streams include numRuns + numRleValues varints,
     /// regardless of physical encoding (byte-RLE uses phys=NONE but still has them).
-    pub(super) fn parse_stream_header(data: &[u8], offset: usize) -> (u8, u8, u8, u8, u8, u64, u64, usize) {
+    pub(super) fn parse_stream_header(
+        data: &[u8],
+        offset: usize,
+    ) -> (u8, u8, u8, u8, u8, u64, u64, usize) {
         let byte0 = data[offset];
         let byte1 = data[offset + 1];
         let stream_type = byte0 >> 4;
@@ -1446,14 +1765,27 @@ mod tests {
         let tech2 = (byte1 >> 2) & 0x07;
         let phys = byte1 & 0x03;
         let mut pos = offset + 2;
-        let (num_values, n) = read_varint(data, pos); pos += n;
-        let (byte_length, n) = read_varint(data, pos); pos += n;
+        let (num_values, n) = read_varint(data, pos);
+        pos += n;
+        let (byte_length, n) = read_varint(data, pos);
+        pos += n;
         // ALL non-bool RLE streams have extra metadata (numRuns, numRleValues)
         if tech1 == LOG_RLE || tech2 == LOG_RLE {
-            let (_num_runs, n) = read_varint(data, pos); pos += n;
-            let (_num_rle_values, n) = read_varint(data, pos); pos += n;
+            let (_num_runs, n) = read_varint(data, pos);
+            pos += n;
+            let (_num_rle_values, n) = read_varint(data, pos);
+            pos += n;
         }
-        (stream_type, subtype, tech1, tech2, phys, num_values, byte_length, pos - offset)
+        (
+            stream_type,
+            subtype,
+            tech1,
+            tech2,
+            phys,
+            num_values,
+            byte_length,
+            pos - offset,
+        )
     }
 
     #[test]
@@ -1470,8 +1802,14 @@ mod tests {
                 let x0 = -79.0 + (i as f64) * 0.1;
                 let ring = LineString(vec![
                     Coord { x: x0, y: 35.0 },
-                    Coord { x: x0 + 0.05, y: 35.0 },
-                    Coord { x: x0 + 0.05, y: 35.05 },
+                    Coord {
+                        x: x0 + 0.05,
+                        y: 35.0,
+                    },
+                    Coord {
+                        x: x0 + 0.05,
+                        y: 35.05,
+                    },
                     Coord { x: x0, y: 35.05 },
                     Coord { x: x0, y: 35.0 },
                 ]);
@@ -1489,32 +1827,42 @@ mod tests {
 
         // Parse layer envelope
         let mut pos = 0;
-        let (layer_len, n) = read_varint(&tile_bytes, pos); pos += n;
-        let (tag, n) = read_varint(&tile_bytes, pos); pos += n;
+        let (layer_len, n) = read_varint(&tile_bytes, pos);
+        pos += n;
+        let (tag, n) = read_varint(&tile_bytes, pos);
+        pos += n;
         assert_eq!(tag, TAG_V01 as u64);
         let layer_end = pos + layer_len as usize - n; // layer_len includes tag
 
         // Layer name
-        let (name_len, n) = read_varint(&tile_bytes, pos); pos += n;
+        let (name_len, n) = read_varint(&tile_bytes, pos);
+        pos += n;
         let name = std::str::from_utf8(&tile_bytes[pos..pos + name_len as usize]).unwrap();
         assert_eq!(name, "test");
         pos += name_len as usize;
 
         // Extent
-        let (extent, n) = read_varint(&tile_bytes, pos); pos += n;
+        let (extent, n) = read_varint(&tile_bytes, pos);
+        pos += n;
         assert_eq!(extent, EXTENT as u64);
 
         // Num columns: id + geometry + 1 property = 3
-        let (num_cols, n) = read_varint(&tile_bytes, pos); pos += n;
+        let (num_cols, n) = read_varint(&tile_bytes, pos);
+        pos += n;
         assert_eq!(num_cols, 3);
 
         // Column metadata (raw u8 bytes, not varints)
-        assert_eq!(tile_bytes[pos], COL_ID); pos += 1;  // LongId = 2
-        assert_eq!(tile_bytes[pos], COL_GEOMETRY); pos += 1;  // Geometry = 4
-        assert_eq!(tile_bytes[pos], COL_I64); pos += 1;  // I64 = 20
-        // Property name follows the type for types >= 5
-        let (prop_name_len, n) = read_varint(&tile_bytes, pos); pos += n;
-        let prop_name = std::str::from_utf8(&tile_bytes[pos..pos + prop_name_len as usize]).unwrap();
+        assert_eq!(tile_bytes[pos], COL_ID);
+        pos += 1; // LongId = 2
+        assert_eq!(tile_bytes[pos], COL_GEOMETRY);
+        pos += 1; // Geometry = 4
+        assert_eq!(tile_bytes[pos], COL_I64);
+        pos += 1; // I64 = 20
+                  // Property name follows the type for types >= 5
+        let (prop_name_len, n) = read_varint(&tile_bytes, pos);
+        pos += n;
+        let prop_name =
+            std::str::from_utf8(&tile_bytes[pos..pos + prop_name_len as usize]).unwrap();
         assert_eq!(prop_name, "value");
         pos += prop_name_len as usize;
 
@@ -1530,7 +1878,8 @@ mod tests {
 
         // --- Geometry streams ---
         // Stream count varint
-        let (geom_stream_count, n) = read_varint(&tile_bytes, pos); pos += n;
+        let (geom_stream_count, n) = read_varint(&tile_bytes, pos);
+        pos += n;
         // Uniform polygons: geom_type + numParts + numRings + vertices = 4
         assert_eq!(geom_stream_count, 4);
 
@@ -1615,25 +1964,34 @@ mod tests {
 
         // Parse to the string property streams
         let mut pos = 0;
-        let (layer_len, n) = read_varint(&tile_bytes, pos); pos += n;
-        let (_tag, n) = read_varint(&tile_bytes, pos); pos += n;
+        let (layer_len, n) = read_varint(&tile_bytes, pos);
+        pos += n;
+        let (_tag, n) = read_varint(&tile_bytes, pos);
+        pos += n;
         let layer_end = pos + layer_len as usize - n;
 
         // Skip: name
-        let (name_len, n) = read_varint(&tile_bytes, pos); pos += n;
+        let (name_len, n) = read_varint(&tile_bytes, pos);
+        pos += n;
         pos += name_len as usize;
         // Skip: extent
-        let (_, n) = read_varint(&tile_bytes, pos); pos += n;
+        let (_, n) = read_varint(&tile_bytes, pos);
+        pos += n;
         // Num columns
-        let (num_cols, n) = read_varint(&tile_bytes, pos); pos += n;
+        let (num_cols, n) = read_varint(&tile_bytes, pos);
+        pos += n;
         assert_eq!(num_cols, 3); // id + geometry + category
 
         // Column metadata (raw u8 bytes)
-        assert_eq!(tile_bytes[pos], COL_ID); pos += 1;
-        assert_eq!(tile_bytes[pos], COL_GEOMETRY); pos += 1;
-        assert_eq!(tile_bytes[pos], COL_STR); pos += 1; // non-nullable string (all present)
-        // Property name
-        let (pnl, n) = read_varint(&tile_bytes, pos); pos += n;
+        assert_eq!(tile_bytes[pos], COL_ID);
+        pos += 1;
+        assert_eq!(tile_bytes[pos], COL_GEOMETRY);
+        pos += 1;
+        assert_eq!(tile_bytes[pos], COL_STR);
+        pos += 1; // non-nullable string (all present)
+                  // Property name
+        let (pnl, n) = read_varint(&tile_bytes, pos);
+        pos += n;
         let pn = std::str::from_utf8(&tile_bytes[pos..pos + pnl as usize]).unwrap();
         assert_eq!(pn, "category");
         pos += pnl as usize;
@@ -1643,7 +2001,8 @@ mod tests {
         pos += hdr_len + bl as usize;
 
         // Skip geometry streams
-        let (geom_count, n) = read_varint(&tile_bytes, pos); pos += n;
+        let (geom_count, n) = read_varint(&tile_bytes, pos);
+        pos += n;
         for _ in 0..geom_count {
             let (_, _, _, _, _, _, bl, hdr_len) = parse_stream_header(&tile_bytes, pos);
             pos += hdr_len + bl as usize;
@@ -1651,9 +2010,13 @@ mod tests {
 
         // --- String property: should be dictionary-encoded ---
         // Stream count varint (string columns have hasStreamCount = true)
-        let (stream_count, n) = read_varint(&tile_bytes, pos); pos += n;
+        let (stream_count, n) = read_varint(&tile_bytes, pos);
+        pos += n;
         // No nulls → stream_count should be 3 (dict_lengths + dict_data + indices)
-        assert_eq!(stream_count, 3, "dictionary encoding should produce 3 streams");
+        assert_eq!(
+            stream_count, 3,
+            "dictionary encoding should produce 3 streams"
+        );
 
         // Stream 1: dictionary lengths (LENGTH, DICTIONARY subtype)
         let (st, sub, _, _, _, nv, bl, hdr_len) = parse_stream_header(&tile_bytes, pos);
@@ -1670,7 +2033,10 @@ mod tests {
         assert_eq!(nv, 3, "num_values should be dictionary entry count");
         // Verify byte_length matches total concatenated dict bytes
         let total_dict_bytes: usize = categories.iter().map(|s| s.len()).sum();
-        assert_eq!(bl as usize, total_dict_bytes, "byte_length should be total dict bytes");
+        assert_eq!(
+            bl as usize, total_dict_bytes,
+            "byte_length should be total dict bytes"
+        );
         pos += hdr_len + bl as usize;
 
         // Stream 3: per-feature indices (OFFSET, STRING)
@@ -1708,14 +2074,16 @@ mod tests {
         let prop_names: Vec<String> = vec![];
         let tile_bytes = encode_tile(&coord, &features, "test", &prop_names);
 
-        let mut layers = mlt_core::parse_layers(&tile_bytes)
-            .expect("mlt-core should parse minimal points");
+        let mut layers =
+            mlt_core::parse_layers(&tile_bytes).expect("mlt-core should parse minimal points");
         assert_eq!(layers.len(), 1);
 
         let layer = layers[0].as_layer01().expect("should be v01");
         assert_eq!(layer.name, "test");
 
-        layers[0].decode_all().expect("mlt-core should decode minimal points");
+        layers[0]
+            .decode_all()
+            .expect("mlt-core should decode minimal points");
     }
 
     #[test]
@@ -1731,8 +2099,14 @@ mod tests {
                 let x0 = -79.0 + (i as f64) * 0.1;
                 let ring = LineString(vec![
                     Coord { x: x0, y: 35.0 },
-                    Coord { x: x0 + 0.05, y: 35.0 },
-                    Coord { x: x0 + 0.05, y: 35.05 },
+                    Coord {
+                        x: x0 + 0.05,
+                        y: 35.0,
+                    },
+                    Coord {
+                        x: x0 + 0.05,
+                        y: 35.05,
+                    },
                     Coord { x: x0, y: 35.05 },
                     Coord { x: x0, y: 35.0 },
                 ]);
@@ -1758,7 +2132,9 @@ mod tests {
         assert_eq!(layer.extent, EXTENT);
 
         // Decode all streams
-        layers[0].decode_all().expect("mlt-core should decode all streams");
+        layers[0]
+            .decode_all()
+            .expect("mlt-core should decode all streams");
 
         // Re-borrow after decode
         let layer = layers[0].as_layer01().unwrap();
@@ -1770,7 +2146,11 @@ mod tests {
             if let mlt_core::v01::PropValue::I64(ref vals) = dp.values {
                 assert_eq!(vals.len(), 10);
                 for (i, v) in vals.iter().enumerate() {
-                    assert_eq!(*v, Some(i as i64 * 10), "property value mismatch at index {i}");
+                    assert_eq!(
+                        *v,
+                        Some(i as i64 * 10),
+                        "property value mismatch at index {i}"
+                    );
                 }
             } else {
                 panic!("expected I64 property values, got {:?}", dp.values);
@@ -1795,7 +2175,11 @@ mod tests {
                 geometry: Geometry::Point(Point::new(-79.0 + (i as f64) * 0.01, 35.5)),
                 properties: vec![
                     PropertyValue::String(categories[i % 3].to_string()),
-                    if i % 5 == 0 { PropertyValue::Null } else { PropertyValue::Int(i as i64) },
+                    if i % 5 == 0 {
+                        PropertyValue::Null
+                    } else {
+                        PropertyValue::Int(i as i64)
+                    },
                 ],
             })
             .collect();
@@ -1812,7 +2196,9 @@ mod tests {
             .expect("mlt-core should parse our dictionary-encoded tile");
         assert_eq!(layers.len(), 1);
 
-        layers[0].decode_all().expect("mlt-core should decode dictionary streams");
+        layers[0]
+            .decode_all()
+            .expect("mlt-core should decode dictionary streams");
 
         let layer = layers[0].as_layer01().unwrap();
         assert_eq!(layer.name, "places");
@@ -1852,7 +2238,10 @@ mod tests {
                     }
                 }
             } else {
-                panic!("expected I64 property values for count, got {:?}", dp.values);
+                panic!(
+                    "expected I64 property values for count, got {:?}",
+                    dp.values
+                );
             }
         } else {
             panic!("expected decoded property for count");
@@ -1928,7 +2317,10 @@ mod fastpfor_tests {
         let values: Vec<u32> = (0..512).map(|i| i % 100).collect();
         let (bytes, technique) = encode_u32_stream_best(&values);
         // With 512 small values, FastPFOR should be selected
-        assert_eq!(technique, PHYS_FAST_PFOR, "FastPFOR should be chosen for 512 small values");
+        assert_eq!(
+            technique, PHYS_FAST_PFOR,
+            "FastPFOR should be chosen for 512 small values"
+        );
         assert!(!bytes.is_empty());
     }
 
@@ -1937,7 +2329,10 @@ mod fastpfor_tests {
         // Under 128 values — must fall back to varint
         let values: Vec<u32> = (0..64).collect();
         let (bytes, technique) = encode_u32_stream_best(&values);
-        assert_eq!(technique, PHYS_VARINT, "should fall back to varint for < 128 values");
+        assert_eq!(
+            technique, PHYS_VARINT,
+            "should fall back to varint for < 128 values"
+        );
         assert!(!bytes.is_empty());
     }
 
@@ -1945,9 +2340,9 @@ mod fastpfor_tests {
     /// when enough vertices are present (closing the testing gap).
     #[test]
     fn test_vertex_stream_uses_fastpfor_metadata() {
+        use super::tests::{parse_stream_header, read_varint};
         use crate::tiler::{Feature, Geometry, PropertyValue, TileCoord};
         use geo_types::{Coord, LineString, Polygon};
-        use super::tests::{read_varint, parse_stream_header};
 
         let coord = TileCoord { z: 4, x: 4, y: 6 };
         // 100 polygons × 4 vertices = 800 interleaved values
@@ -1956,8 +2351,14 @@ mod fastpfor_tests {
                 let x0 = -79.0 + (i as f64) * 0.01;
                 let ring = LineString(vec![
                     Coord { x: x0, y: 35.0 },
-                    Coord { x: x0 + 0.005, y: 35.0 },
-                    Coord { x: x0 + 0.005, y: 35.005 },
+                    Coord {
+                        x: x0 + 0.005,
+                        y: 35.0,
+                    },
+                    Coord {
+                        x: x0 + 0.005,
+                        y: 35.005,
+                    },
                     Coord { x: x0, y: 35.005 },
                     Coord { x: x0, y: 35.0 },
                 ]);
@@ -1974,26 +2375,33 @@ mod fastpfor_tests {
 
         // Parse to find the vertex stream
         let mut pos = 0;
-        let (layer_len, n) = read_varint(&tile_bytes, pos); pos += n;
-        let (_tag, n) = read_varint(&tile_bytes, pos); pos += n;
+        let (layer_len, n) = read_varint(&tile_bytes, pos);
+        pos += n;
+        let (_tag, n) = read_varint(&tile_bytes, pos);
+        pos += n;
         // Skip: name
-        let (name_len, n) = read_varint(&tile_bytes, pos); pos += n;
+        let (name_len, n) = read_varint(&tile_bytes, pos);
+        pos += n;
         pos += name_len as usize;
         // Skip: extent
-        let (_, n) = read_varint(&tile_bytes, pos); pos += n;
+        let (_, n) = read_varint(&tile_bytes, pos);
+        pos += n;
         // Skip: num columns
-        let (num_cols, n) = read_varint(&tile_bytes, pos); pos += n;
+        let (num_cols, n) = read_varint(&tile_bytes, pos);
+        pos += n;
         // Skip column metadata
         pos += 1; // COL_ID
         pos += 1; // COL_GEOMETRY
         pos += 1; // COL_I64
-        let (prop_name_len, n) = read_varint(&tile_bytes, pos); pos += n;
+        let (prop_name_len, n) = read_varint(&tile_bytes, pos);
+        pos += n;
         pos += prop_name_len as usize;
         // Skip ID stream
         let (_, _, _, _, _, _, bl, hdr_len) = parse_stream_header(&tile_bytes, pos);
         pos += hdr_len + bl as usize;
         // Geometry stream count
-        let (geom_count, n) = read_varint(&tile_bytes, pos); pos += n;
+        let (geom_count, n) = read_varint(&tile_bytes, pos);
+        pos += n;
         // Skip non-vertex geometry streams (geom_type, numParts, numRings)
         for _ in 0..(geom_count - 1) {
             let (_, _, _, _, _, _, bl, hdr_len) = parse_stream_header(&tile_bytes, pos);
@@ -2004,8 +2412,14 @@ mod fastpfor_tests {
         assert_eq!(st, STREAM_DATA, "should be DATA stream");
         assert_eq!(sub, DATA_VERTEX, "should be VERTEX subtype");
         assert_eq!(t1, LOG_COMPONENTWISE_DELTA, "should be componentwise delta");
-        assert_eq!(phys, PHYS_FAST_PFOR, "vertex stream should use PHYS_FAST_PFOR with 800 interleaved values");
-        assert_eq!(nv, 800, "num_values should be 400 vertices × 2 coords = 800");
+        assert_eq!(
+            phys, PHYS_FAST_PFOR,
+            "vertex stream should use PHYS_FAST_PFOR with 800 interleaved values"
+        );
+        assert_eq!(
+            nv, 800,
+            "num_values should be 400 vertices × 2 coords = 800"
+        );
     }
 
     /// Phase 3: Full-tile conformance test with enough features to trigger
@@ -2022,8 +2436,14 @@ mod fastpfor_tests {
                 let x0 = -79.0 + (i as f64) * 0.01;
                 let ring = LineString(vec![
                     Coord { x: x0, y: 35.0 },
-                    Coord { x: x0 + 0.005, y: 35.0 },
-                    Coord { x: x0 + 0.005, y: 35.005 },
+                    Coord {
+                        x: x0 + 0.005,
+                        y: 35.0,
+                    },
+                    Coord {
+                        x: x0 + 0.005,
+                        y: 35.005,
+                    },
                     Coord { x: x0, y: 35.005 },
                     Coord { x: x0, y: 35.0 },
                 ]);
@@ -2042,7 +2462,9 @@ mod fastpfor_tests {
             .expect("mlt-core should parse FastPFOR-encoded tile");
         assert_eq!(layers.len(), 1);
 
-        layers[0].decode_all().expect("mlt-core should decode FastPFOR vertex streams");
+        layers[0]
+            .decode_all()
+            .expect("mlt-core should decode FastPFOR vertex streams");
 
         let layer = layers[0].as_layer01().unwrap();
         assert_eq!(layer.name, "counties");
@@ -2053,7 +2475,11 @@ mod fastpfor_tests {
             if let mlt_core::v01::PropValue::I64(ref vals) = dp.values {
                 assert_eq!(vals.len(), 100);
                 for (i, v) in vals.iter().enumerate() {
-                    assert_eq!(*v, Some(i as i64 * 10), "property value mismatch at index {i}");
+                    assert_eq!(
+                        *v,
+                        Some(i as i64 * 10),
+                        "property value mismatch at index {i}"
+                    );
                 }
             } else {
                 panic!("expected I64 property values");
@@ -2087,14 +2513,20 @@ mod fastpfor_tests {
             .expect("mlt-core should parse dictionary+FastPFOR tile");
         assert_eq!(layers.len(), 1);
 
-        layers[0].decode_all().expect("mlt-core should decode dictionary+FastPFOR streams");
+        layers[0]
+            .decode_all()
+            .expect("mlt-core should decode dictionary+FastPFOR streams");
 
         let layer = layers[0].as_layer01().unwrap();
         if let mlt_core::v01::Property::Decoded(ref dp) = layer.properties[0] {
             if let mlt_core::v01::PropValue::Str(ref vals) = dp.values {
                 assert_eq!(vals.len(), 200);
                 for (i, v) in vals.iter().enumerate() {
-                    assert_eq!(v.as_deref(), Some(categories[i % 4]), "string mismatch at index {i}");
+                    assert_eq!(
+                        v.as_deref(),
+                        Some(categories[i % 4]),
+                        "string mismatch at index {i}"
+                    );
                 }
             } else {
                 panic!("expected Str values");
@@ -2118,12 +2550,20 @@ mod fsst_tests {
     fn test_fsst_dictionary_roundtrip() {
         // Create enough repeated strings to trigger FSST (need >= 32 entries, >= 4096 total bytes)
         let base_entries: Vec<String> = (0..100)
-            .map(|i| format!("category_value_{:03}_this_is_a_long_enough_string_for_compression_testing", i))
+            .map(|i| {
+                format!(
+                    "category_value_{:03}_this_is_a_long_enough_string_for_compression_testing",
+                    i
+                )
+            })
             .collect();
         let dict_entries: Vec<&str> = base_entries.iter().map(|s| s.as_str()).collect();
 
         let result = try_fsst_dictionary(&dict_entries);
-        assert!(result.is_some(), "50 entries with long strings should trigger FSST");
+        assert!(
+            result.is_some(),
+            "50 entries with long strings should trigger FSST"
+        );
 
         let fsst_encoded = result.unwrap();
 
@@ -2166,7 +2606,10 @@ mod fsst_tests {
     #[test]
     fn test_fsst_skips_small_dictionaries() {
         let entries = vec!["a", "b", "c"];
-        assert!(try_fsst_dictionary(&entries).is_none(), "should skip tiny dictionaries");
+        assert!(
+            try_fsst_dictionary(&entries).is_none(),
+            "should skip tiny dictionaries"
+        );
     }
 
     /// Phase 7: Full-tile conformance test with FSST-compressed dictionary strings.
@@ -2186,7 +2629,10 @@ mod fsst_tests {
         // Verify FSST thresholds are met
         let total_bytes: usize = categories.iter().map(|s| s.len()).sum();
         assert!(categories.len() >= 32, "need >= 32 unique values");
-        assert!(total_bytes >= 4096, "need >= 4096 total bytes, got {total_bytes}");
+        assert!(
+            total_bytes >= 4096,
+            "need >= 4096 total bytes, got {total_bytes}"
+        );
 
         // 500 features cycling through 50 categories = high repetition
         let features: Vec<Feature> = (0..500)
@@ -2203,11 +2649,13 @@ mod fsst_tests {
         let prop_names = vec!["category".to_string(), "count".to_string()];
         let tile_bytes = encode_tile(&coord, &features, "places", &prop_names);
 
-        let mut layers = mlt_core::parse_layers(&tile_bytes)
-            .expect("mlt-core should parse FSST-encoded tile");
+        let mut layers =
+            mlt_core::parse_layers(&tile_bytes).expect("mlt-core should parse FSST-encoded tile");
         assert_eq!(layers.len(), 1);
 
-        layers[0].decode_all().expect("mlt-core should decode FSST dictionary streams");
+        layers[0]
+            .decode_all()
+            .expect("mlt-core should decode FSST dictionary streams");
 
         let layer = layers[0].as_layer01().unwrap();
         assert_eq!(layer.name, "places");
@@ -2283,8 +2731,14 @@ mod benchmarks {
                 let x0 = -79.0 + (i as f64) * 0.01;
                 let ring = LineString(vec![
                     Coord { x: x0, y: 35.0 },
-                    Coord { x: x0 + 0.005, y: 35.0 },
-                    Coord { x: x0 + 0.005, y: 35.005 },
+                    Coord {
+                        x: x0 + 0.005,
+                        y: 35.0,
+                    },
+                    Coord {
+                        x: x0 + 0.005,
+                        y: 35.005,
+                    },
                     Coord { x: x0, y: 35.005 },
                     Coord { x: x0, y: 35.0 },
                 ]);
@@ -2300,11 +2754,7 @@ mod benchmarks {
             })
             .collect();
 
-        let prop_names = vec![
-            "name".to_string(),
-            "fid".to_string(),
-            "area".to_string(),
-        ];
+        let prop_names = vec!["name".to_string(), "fid".to_string(), "area".to_string()];
         (features, prop_names)
     }
 
@@ -2338,7 +2788,10 @@ mod benchmarks {
     }
 
     /// String-heavy: many features cycling through a large dictionary.
-    fn make_string_heavy_features(count: usize, unique_strings: usize) -> (Vec<Feature>, Vec<String>) {
+    fn make_string_heavy_features(
+        count: usize,
+        unique_strings: usize,
+    ) -> (Vec<Feature>, Vec<String>) {
         let categories: Vec<String> = (0..unique_strings)
             .map(|i| format!(
                 "long_category_identifier_{:04}_with_extra_text_to_simulate_real_world_string_property_values_in_vector_tiles",
@@ -2352,7 +2805,10 @@ mod benchmarks {
                 geometry: Geometry::Point(Point::new(-79.0 + (i as f64) * 0.002, 35.5)),
                 properties: vec![
                     PropertyValue::String(categories[i % unique_strings].clone()),
-                    PropertyValue::String(format!("secondary_value_{}", i % (unique_strings / 2).max(1))),
+                    PropertyValue::String(format!(
+                        "secondary_value_{}",
+                        i % (unique_strings / 2).max(1)
+                    )),
                     PropertyValue::Int(i as i64),
                 ],
             })
@@ -2461,9 +2917,16 @@ mod benchmarks {
 
             let varint_bytes = encode_varint_u32_stream(&all_zigzag);
             let (best_bytes, technique) = encode_u32_stream_best(&all_zigzag);
-            let tech_name = if technique == PHYS_FAST_PFOR { "FastPFOR" } else { "varint" };
+            let tech_name = if technique == PHYS_FAST_PFOR {
+                "FastPFOR"
+            } else {
+                "varint"
+            };
 
-            println!("Vertex stream ({} interleaved zigzag values):", all_zigzag.len());
+            println!(
+                "Vertex stream ({} interleaved zigzag values):",
+                all_zigzag.len()
+            );
             println!("  Varint:        {:>8} bytes", varint_bytes.len());
             println!("  Best ({}): {:>8} bytes", tech_name, best_bytes.len());
             if !varint_bytes.is_empty() {
@@ -2478,7 +2941,11 @@ mod benchmarks {
             let indices: Vec<u32> = (0..500).map(|i| (i % 100) as u32).collect();
             let varint_bytes = encode_varint_u32_stream(&indices);
             let (best_bytes, technique) = encode_u32_stream_best(&indices);
-            let tech_name = if technique == PHYS_FAST_PFOR { "FastPFOR" } else { "varint" };
+            let tech_name = if technique == PHYS_FAST_PFOR {
+                "FastPFOR"
+            } else {
+                "varint"
+            };
 
             println!("Dict index stream (500 features, 100 unique values):");
             println!("  Varint:        {:>8} bytes", varint_bytes.len());
@@ -2505,8 +2972,15 @@ mod benchmarks {
                 let total_fsst = fsst.compressed_data.len() + fsst.symbol_data.len();
                 println!("FSST dictionary (100 entries, {} raw bytes):", raw_bytes);
                 println!("  Raw dict:      {:>8} bytes", raw_bytes);
-                println!("  FSST data:     {:>8} bytes (compressed)", fsst.compressed_data.len());
-                println!("  Symbol table:  {:>8} bytes ({} symbols)", fsst.symbol_data.len(), fsst.symbol_lengths.len());
+                println!(
+                    "  FSST data:     {:>8} bytes (compressed)",
+                    fsst.compressed_data.len()
+                );
+                println!(
+                    "  Symbol table:  {:>8} bytes ({} symbols)",
+                    fsst.symbol_data.len(),
+                    fsst.symbol_lengths.len()
+                );
                 let ratio = 100.0 * (1.0 - total_fsst as f64 / raw_bytes as f64);
                 println!("  Savings:       {:>7.1}%", ratio);
             } else {

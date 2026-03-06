@@ -17,6 +17,10 @@ Install from [r-universe](https://walkerke.r-universe.dev):
 install.packages("freestiler", repos = "https://walkerke.r-universe.dev")
 ```
 
+The `r-universe` build is the recommended install for serious DuckDB-backed
+workloads. Native builds include the Rust DuckDB backend by default, including
+the streaming point pipeline used by `freestile_query()`.
+
 Or install the development version from GitHub:
 
 ```r

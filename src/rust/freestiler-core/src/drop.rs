@@ -1,4 +1,4 @@
-use crate::tiler::{Feature, Geometry, geometry_bbox, morton_code};
+use crate::tiler::{geometry_bbox, morton_code, Feature, Geometry};
 
 /// Compute Morton-code spatial indices for point features.
 /// Returns (original_feature_index, morton_code) pairs sorted by morton code.

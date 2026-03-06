@@ -18,7 +18,8 @@ rust_freestile_duckdb_query(
   cluster_distance,
   cluster_maxzoom,
   do_coalesce,
-  quiet
+  quiet,
+  streaming_mode
 )
 }
 \arguments{
@@ -49,6 +50,8 @@ rust_freestile_duckdb_query(
 \item{do_coalesce}{Whether to coalesce features}
 
 \item{quiet}{Whether to suppress progress}
+
+\item{streaming_mode}{"auto", "always", or "never"}
 }
 \description{
 Create tiles from a DuckDB SQL query (requires duckdb feature)

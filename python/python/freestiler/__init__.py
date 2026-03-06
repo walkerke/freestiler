@@ -509,6 +509,7 @@ def freestile_query(
     simplification: bool = True,
     overwrite: bool = True,
     quiet: bool = False,
+    streaming: str = "auto",
 ) -> Path:
     """Create a PMTiles archive from a DuckDB SQL query.
 
@@ -551,6 +552,8 @@ def freestile_query(
         Whether to overwrite existing output file (default True).
     quiet : bool
         Whether to suppress progress messages (default False).
+    streaming : str
+        DuckDB query execution mode: "auto" (default), "always", or "never".
 
     Returns
     -------
@@ -564,6 +567,10 @@ def freestile_query(
     """
     if tile_format not in ("mlt", "mvt"):
         raise ValueError(f"tile_format must be 'mlt' or 'mvt', got '{tile_format}'")
+    if streaming not in ("auto", "always", "never"):
+        raise ValueError(
+            f"streaming must be 'auto', 'always', or 'never', got '{streaming}'"
+        )
 
     if not _HAS_DUCKDB:
         raise RuntimeError(
@@ -605,6 +612,7 @@ def freestile_query(
         cluster_distance=cluster_distance if cluster_distance is not None else -1.0,
         cluster_maxzoom=cluster_maxzoom if cluster_maxzoom is not None else -1,
         do_coalesce=coalesce,
+        streaming_mode=streaming,
     )
 
     if not quiet:

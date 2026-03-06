@@ -346,10 +346,11 @@ freestile <- function(
 #' Reads a GeoParquet, GeoPackage, Shapefile, or other spatial file directly
 #' into the tiling engine. The GeoParquet engine requires compilation with
 #' `FREESTILER_GEOPARQUET=true`. The DuckDB engine uses the Rust DuckDB backend
-#' if compiled (`FREESTILER_DUCKDB=true`), or falls back to the R `duckdb`
-#' package (which reads the file via DuckDB's `ST_Read()`, auto-detects the
-#' source CRS via `ST_Read_Meta()`, and reprojects to WGS84). Control backend
-#' selection with `options(freestiler.duckdb_backend = "auto"|"rust"|"r")`.
+#' when included in the build (enabled by default for native builds), or falls
+#' back to the R `duckdb` package (which reads the file via DuckDB's
+#' `ST_Read()`, auto-detects the source CRS via `ST_Read_Meta()`, and
+#' reprojects to WGS84). Control backend selection with
+#' `options(freestiler.duckdb_backend = "auto"|"rust"|"r")`.
 #'
 #' @param input Character. Path to the input spatial file.
 #' @param output Character. Path for the output .pmtiles file.
@@ -523,9 +524,9 @@ freestile_file <- function(
 #' Create vector tiles from a DuckDB SQL query
 #'
 #' Executes a SQL query via DuckDB's spatial extension and pipes the results
-#' into the tiling engine. Uses the Rust DuckDB backend if compiled
-#' (`FREESTILER_DUCKDB=true`), or falls back to the R `duckdb` package.
-#' Control backend selection with
+#' into the tiling engine. Uses the Rust DuckDB backend when included in the
+#' build (enabled by default for native builds), or falls back to the R
+#' `duckdb` package. Control backend selection with
 #' `options(freestiler.duckdb_backend = "auto"|"rust"|"r")`.
 #'
 #' When using the R fallback, `source_crs` must be supplied explicitly so the
@@ -560,6 +561,9 @@ freestile_file <- function(
 #'   grid (default TRUE).
 #' @param overwrite Logical. Whether to overwrite existing output (default TRUE).
 #' @param quiet Logical. Whether to suppress progress (default FALSE).
+#' @param streaming Character. DuckDB query execution mode: `"auto"` (default)
+#'   enables the streaming point pipeline for large queries, `"always"` forces
+#'   it, and `"never"` uses the existing in-memory path.
 #'
 #' @return The output file path (invisibly).
 #'
@@ -602,9 +606,11 @@ freestile_query <- function(
     simplification = TRUE,
     overwrite = TRUE,
     quiet = FALSE,
-    source_crs = NULL
+    source_crs = NULL,
+    streaming = "auto"
 ) {
   tile_format <- match.arg(tile_format, c("mlt", "mvt"))
+  streaming <- match.arg(streaming, c("auto", "always", "never"))
 
   output <- normalizePath(output, mustWork = FALSE)
 
@@ -632,6 +638,12 @@ freestile_query <- function(
   }
 
   if (backend == "r") {
+    if (streaming == "always") {
+      stop(
+        "Streaming mode is only available with the Rust DuckDB backend.",
+        call. = FALSE
+      )
+    }
     sf_result <- .r_duckdb_query_to_sf(
       query,
       db_path = db_path,
@@ -664,7 +676,8 @@ freestile_query <- function(
     cluster_distance = if (is.null(cluster_distance)) -1.0 else as.double(cluster_distance),
     cluster_maxzoom = if (is.null(cluster_maxzoom)) -1L else as.integer(cluster_maxzoom),
     do_coalesce = coalesce,
-    quiet = quiet
+    quiet = quiet,
+    streaming_mode = streaming
   )
 
   if (startsWith(result, "Error:")) {
@@ -687,7 +700,7 @@ freestile_query <- function(
 .has_rust_duckdb <- function() {
   if (!is.null(.pkg_cache$rust_duckdb)) return(.pkg_cache$rust_duckdb)
   result <- rust_freestile_duckdb_query("", "", "", "", "mvt", 0L, 6L, -1L,
-    TRUE, -1.0, -1.0, -1L, FALSE, TRUE)
+    TRUE, -1.0, -1.0, -1L, FALSE, TRUE, "never")
   val <- !startsWith(result, "Error: DuckDB support not compiled")
   .pkg_cache$rust_duckdb <- val
   val
@@ -709,8 +722,8 @@ freestile_query <- function(
   if (backend == "rust") {
     if (!.has_rust_duckdb()) {
       stop(
-        "Rust DuckDB backend requested but not compiled. ",
-        "Rebuild with FREESTILER_DUCKDB=true, or set ",
+        "Rust DuckDB backend requested but not available in this build. ",
+        "Install the r-universe build or rebuild from source with DuckDB enabled, or set ",
         "options(freestiler.duckdb_backend = \"auto\") to use the R fallback.",
         call. = FALSE
       )
@@ -735,7 +748,7 @@ freestile_query <- function(
 
   stop(
     "No DuckDB backend available. Either:\n",
-    "  - Rebuild freestiler with FREESTILER_DUCKDB=true, or\n",
+    "  - Install the r-universe build or rebuild from source with DuckDB enabled, or\n",
     "  - Install the R duckdb package: install.packages(c(\"duckdb\", \"DBI\"))",
     call. = FALSE
   )

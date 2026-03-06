@@ -78,8 +78,9 @@ rust_freestile_duckdb <- function(input_path, output_path, layer_name, tile_form
 #' @param cluster_maxzoom Max zoom for clustering (negative = use max_zoom - 1)
 #' @param do_coalesce Whether to coalesce features
 #' @param quiet Whether to suppress progress
+#' @param streaming_mode "auto", "always", or "never"
 #' @keywords internal
-rust_freestile_duckdb_query <- function(sql, db_path, output_path, layer_name, tile_format, min_zoom, max_zoom, base_zoom, do_simplify, drop_rate, cluster_distance, cluster_maxzoom, do_coalesce, quiet) .Call(wrap__rust_freestile_duckdb_query, sql, db_path, output_path, layer_name, tile_format, min_zoom, max_zoom, base_zoom, do_simplify, drop_rate, cluster_distance, cluster_maxzoom, do_coalesce, quiet)
+rust_freestile_duckdb_query <- function(sql, db_path, output_path, layer_name, tile_format, min_zoom, max_zoom, base_zoom, do_simplify, drop_rate, cluster_distance, cluster_maxzoom, do_coalesce, quiet, streaming_mode) .Call(wrap__rust_freestile_duckdb_query, sql, db_path, output_path, layer_name, tile_format, min_zoom, max_zoom, base_zoom, do_simplify, drop_rate, cluster_distance, cluster_maxzoom, do_coalesce, quiet, streaming_mode)
 
 
 # nolint end

@@ -9,6 +9,8 @@ pub mod mlt;
 pub mod mvt;
 pub mod pmtiles_writer;
 pub mod simplify;
+#[cfg(feature = "duckdb")]
+pub mod streaming;
 pub mod tiler;
 
 // Re-export key dependencies for use by binding crates
