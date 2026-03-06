@@ -42,6 +42,7 @@ webr_target <- "wasm32-unknown-emscripten"
 
 # here we check if the platform we are building for is webr
 is_wasm <- identical(R.version$platform, webr_target)
+is_windows <- .Platform[["OS.type"]] == "windows"
 
 # print to terminal to inform we are building for webr
 if (is_wasm) {
@@ -90,14 +91,19 @@ if (is_not_cran) {
   }
 }
 
-# DuckDB is enabled by default for native builds. Set FREESTILER_DUCKDB=false
-# (or 0/no/off) to disable it explicitly.
-duckdb_env <- tolower(trimws(Sys.getenv("FREESTILER_DUCKDB", unset = "true")))
+# DuckDB is enabled by default for native non-Windows builds. Windows R builds
+# currently target GNU toolchains, and bundled libduckdb-sys is not reliable
+# there yet. Set FREESTILER_DUCKDB=true to force-enable, or false/0/no/off to
+# disable explicitly.
+duckdb_default <- if (is_wasm) "false" else if (is_windows) "false" else "true"
+duckdb_env <- tolower(trimws(Sys.getenv("FREESTILER_DUCKDB", unset = duckdb_default)))
 duckdb_enabled <- !duckdb_env %in% c("0", "false", "no", "off")
 
 if (!is_wasm && duckdb_enabled) {
   features <- c(features, "duckdb")
   message("Enabling DuckDB feature.")
+} else if (is_windows) {
+  message("DuckDB feature disabled on Windows by default.")
 } else if (!is_wasm) {
   message("DuckDB feature disabled.")
 }
@@ -106,9 +112,6 @@ if (!is_wasm && duckdb_enabled) {
 } else {
   ""
 }
-
-# read in the Makevars.in file checking
-is_windows <- .Platform[["OS.type"]] == "windows"
 
 # if windows we replace in the Makevars.win.in
 mv_fp <- ifelse(

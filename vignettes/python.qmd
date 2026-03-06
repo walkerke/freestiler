@@ -1,7 +1,7 @@
 ---
-title: "Python Setup & Viewing"
+title: "Python Setup"
 vignette: >
-  %\VignetteIndexEntry{Python Setup & Viewing}
+  %\VignetteIndexEntry{Python Setup}
   %\VignetteEngine{quarto::html}
   %\VignetteEncoding{UTF-8}
 ---
@@ -15,8 +15,8 @@ library(freestiler)
 ## Overview
 
 freestiler's Python package shares the same Rust engine as the R package. This
-article covers Python-specific setup: installation, virtual environments,
-building with optional features, and viewing tiles.
+article covers Python-specific setup: installation, virtual environments, and
+source builds.
 
 For usage examples (basic tiling, multi-layer, feature dropping, clustering,
 coalescing, file input, SQL queries), see the
@@ -25,13 +25,13 @@ side-by-side.
 
 ## Prerequisites
 
-You need a Rust toolchain installed. If you don't have one:
+For normal installs from PyPI, you just need Python 3.9+ and pip.
 
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
+You only need a Rust toolchain if:
 
-You also need Python 3.9+ and pip.
+- a wheel is not available for your platform
+- you want an editable local build
+- you want to build wheels yourself
 
 ## Installation
 
@@ -58,8 +58,9 @@ GeoPandas and its dependencies are installed automatically.
 pip install freestiler
 ```
 
-Published PyPI wheels ship the base feature set: GeoPandas input, multi-layer
-tiling, feature management, and direct GeoParquet file input.
+Published PyPI wheels ship the native feature set: GeoPandas input, multi-layer
+tiling, feature management, direct GeoParquet file input, DuckDB-backed file
+input, and DuckDB SQL query support.
 
 ### Build with maturin
 
@@ -70,13 +71,10 @@ pip install maturin
 python3 -m maturin develop --release
 ```
 
-## Optional features
+## Source builds and features
 
-GeoParquet support is part of the default Python build.
-
-DuckDB-backed file input and SQL queries are intentionally not included in the
-published PyPI wheels yet. If you need DuckDB support, build from a local
-checkout with the `duckdb` Cargo feature enabled:
+GeoParquet and DuckDB support are part of the default Python build. If you want
+to build from a local checkout with the same default feature set:
 
 ```bash
 git clone https://github.com/walkerke/freestiler.git
@@ -84,116 +82,39 @@ cd freestiler/python
 python3 -m venv .venv
 source .venv/bin/activate
 pip install maturin
-python3 -m maturin develop --release --features duckdb
+python3 -m maturin develop --release
 ```
 
 To build a wheel instead of using an editable install:
 
 ```bash
-python3 -m maturin build --release --features duckdb --out dist
+python3 -m maturin build --release --out dist
 pip install dist/freestiler-*.whl
 ```
 
 ## Viewing tiles
 
-### py-maplibregl (MVT)
+Python tiling is in good shape. Python viewing is less settled.
 
-py-maplibregl bundles MapLibre GL JS 5.3, which supports MVT but not yet MLT.
-Create tiles with `tile_format="mvt"`:
+The safe recommendations today are:
 
-```python
-import geopandas as gpd
-from freestiler import freestile
-from maplibre import Map, MapOptions
-from maplibre.sources import VectorTileSource
-from maplibre.layers import Layer, LayerType
+- create Python-facing examples with `tile_format="mvt"`
+- treat browser viewing with current MapLibre GL JS as the most predictable
+  PMTiles path
+- assume local PMTiles need a real static server with HTTP range support
 
-gdf = gpd.read_file("nc.shp")
-freestile(gdf, "nc_mvt.pmtiles", layer_name="counties", tile_format="mvt")
+One important caveat: Python's built-in `http.server` does not support byte
+range requests, so it is not a reliable PMTiles server. Use a real static file
+server instead, such as:
 
-source = VectorTileSource(url="pmtiles://nc_mvt.pmtiles")
-
-layer = Layer(
-    type=LayerType.FILL,
-    id="counties",
-    source="counties-source",
-    source_layer="counties",
-    paint={"fill-color": "#00897b", "fill-opacity": 0.5}
-)
-
-m = Map(MapOptions(center=[-79.5, 35.5], zoom=6))
-m.add_source("counties-source", source)
-m.add_layer(layer)
-m
+```bash
+npx http-server /path/to/tiles -p 8082 --cors -c-1
 ```
 
-### leafmap (MVT)
-
-leafmap also currently requires MVT format:
-
-```python
-import leafmap.maplibregl as leafmap
-
-m = leafmap.Map(center=[-79.5, 35.5], zoom=6)
-m.add_pmtiles("nc_mvt.pmtiles", style={
-    "layers": [{
-        "id": "counties",
-        "type": "fill",
-        "source-layer": "counties",
-        "paint": {"fill-color": "#00897b", "fill-opacity": 0.5}
-    }]
-})
-m
-```
-
-### MapLibre GL JS in the browser (MLT or MVT)
-
-For MLT support, use MapLibre GL JS 5.17+ directly. PMTiles files can be served
-from any static file host:
-
-```html
-<script src="https://unpkg.com/pmtiles/dist/pmtiles.js"></script>
-<script src="https://unpkg.com/maplibre-gl/dist/maplibre-gl.js"></script>
-<script>
-  let protocol = new pmtiles.Protocol();
-  maplibregl.addProtocol("pmtiles", protocol.tile);
-
-  new maplibregl.Map({
-    container: "map",
-    style: {
-      version: 8,
-      sources: {
-        counties: {
-          type: "vector",
-          url: "pmtiles://nc_counties.pmtiles"
-        }
-      },
-      layers: [{
-        id: "county-fill",
-        type: "fill",
-        source: "counties",
-        "source-layer": "counties",
-        paint: { "fill-color": "#00897b", "fill-opacity": 0.5 }
-      }]
-    }
-  });
-</script>
-```
-
-## MLT viewer status
-
-MLT is a new format (January 2026). Current viewer support:
-
-| Viewer | MVT | MLT |
-|--------|-----|-----|
-| mapgl (R) | Yes | Yes |
-| py-maplibregl | Yes | Not yet (bundles GL JS 5.3) |
-| leafmap | Yes | Not yet |
-| MapLibre GL JS 5.17+ | Yes | Yes |
-
-As Python viewers upgrade their bundled MapLibre GL JS to 5.17+, MLT will work
-everywhere. Until then, use `tile_format="mvt"` when creating tiles for Python
-viewing.
+At the moment, the R `mapgl` workflow is the most reliable local viewing path
+for PMTiles generated by freestiler. For Python, focus on tiling first and
+treat viewing examples as browser-based unless you have tested a specific
+viewer stack yourself.
 
 ## R vs Python API
 

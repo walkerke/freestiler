@@ -69,6 +69,27 @@ def point_parquet(tmp_path):
     return path
 
 
+@pytest.fixture
+def gpkg_file(tmp_path):
+    """Create a small GeoPackage fixture for DuckDB-backed file input."""
+    gdf = gpd.GeoDataFrame(
+        {
+            "name": ["a", "b", "c"],
+            "value": [1.0, 2.0, 3.0],
+            "count": [10, 20, 30],
+        },
+        geometry=[
+            box(-80, 35, -78, 37),
+            box(-82, 34, -79, 36),
+            box(-84, 33, -81, 35),
+        ],
+        crs="EPSG:4326",
+    )
+    path = tmp_path / "test.gpkg"
+    gdf.to_file(path, driver="GPKG")
+    return path
+
+
 @requires_geoparquet
 def test_parquet_to_mvt(tmp_path, parquet_file):
     output = tmp_path / "out.pmtiles"
@@ -140,10 +161,10 @@ def test_file_engine_auto_parquet(tmp_path, parquet_file):
 
 
 @requires_duckdb
-def test_file_engine_duckdb(tmp_path, parquet_file):
-    """Explicit engine='duckdb' on a parquet file."""
+def test_file_engine_duckdb(tmp_path, gpkg_file):
+    """Explicit engine='duckdb' on a GDAL-readable spatial file."""
     output = tmp_path / "duckdb.pmtiles"
-    result = freestile_file(parquet_file, output, engine="duckdb", max_zoom=6, quiet=True)
+    result = freestile_file(gpkg_file, output, engine="duckdb", max_zoom=6, quiet=True)
     assert result.exists()
     assert result.stat().st_size > 0
 

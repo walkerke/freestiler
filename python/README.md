@@ -1,6 +1,7 @@
 # freestiler for Python
 
-`freestiler` builds PMTiles vector tile archives from GeoPandas data, GeoParquet files, and DuckDB spatial queries using a Rust tiling engine.
+`freestiler` builds PMTiles vector tile archives from GeoPandas data,
+GeoParquet files, and DuckDB spatial queries using a Rust tiling engine.
 
 Features:
 
@@ -9,6 +10,13 @@ Features:
 - Point clustering
 - Feature coalescing
 - Exponential feature dropping for low zoom levels
+
+## Why this package exists
+
+- Python-native API backed by the same Rust tiler as the R package
+- PMTiles output instead of tile directory trees
+- Direct DuckDB SQL tiling
+- Streaming point tiling for large DuckDB query results
 
 ## Installation
 
@@ -39,6 +47,22 @@ gdf = gpd.read_file("counties.shp")
 
 freestile(gdf, "counties.pmtiles", layer_name="counties")
 ```
+
+That example is intentionally small. The more interesting path is tiling
+directly from DuckDB:
+
+```python
+from freestiler import freestile_query
+
+freestile_query(
+    query="SELECT * FROM read_parquet('blocks.parquet') WHERE state = 'NC'",
+    output="nc_blocks.pmtiles",
+    layer_name="blocks",
+)
+```
+
+For very large point tables, use `streaming="always"` and prefer
+`tile_format="mvt"` for maximum viewer compatibility.
 
 ## Source Builds
 

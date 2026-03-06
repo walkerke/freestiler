@@ -21,9 +21,15 @@ docs/
 .DS_Store
 _CLAUDE.md
 _PYTHON_HANDOFF.md
+.ipynb_checkpoints/
 *.pmtiles
 *.Rcheck/
 *.tar.gz
 src/rust/freestiler-core/target/
 python/python/freestiler/*.so
 python/python/freestiler/*.dSYM/
+tmp-python-demo/
+python/nc.dbf
+python/nc.prj
+python/nc.shp
+python/nc.shx

@@ -12,7 +12,8 @@ echo "Creating venv..."
 uv venv .venv
 
 echo "Installing dependencies..."
-uv pip install maturin geopandas shapely pyproj numpy pytest
+uv pip install maturin geopandas shapely pyproj numpy pytest \
+  ipykernel ipywidgets notebook jupyterlab maplibre "leafmap[maplibre]"
 
 FEATURES="--features duckdb"
 if [[ "$1" == "--no-duckdb" ]]; then
@@ -28,6 +29,7 @@ echo ""
 echo "Done! To use in Positron:"
 echo "  1. Open Command Palette → 'Python: Select Interpreter'"
 echo "  2. Choose: $(pwd)/.venv/bin/python"
+echo "  3. Open python/examples/positron_pmtiles_smoke.py and run cells with # %%"
 echo ""
 echo "Or from terminal:"
 echo "  source .venv/bin/activate"

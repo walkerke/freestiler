@@ -8,6 +8,8 @@
 ^src/rust/freestiler-core/target$
 ^src/rust/vendor$
 ^python
+^\.ipynb_checkpoints$
+^tmp-python-demo$
 \.pmtiles$
 ^examples$
 ^_PYTHON_HANDOFF\.md$
