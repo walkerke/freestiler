@@ -32,50 +32,62 @@ jobs:
             python-version: "3.9"
             manylinux: "2_28"
             duckdb_explicit_platform: "linux_amd64"
+            interpreter: "/opt/python/cp39-cp39/bin/python"
           - os: ubuntu-latest
             python-version: "3.10"
             manylinux: "2_28"
             duckdb_explicit_platform: "linux_amd64"
+            interpreter: "/opt/python/cp310-cp310/bin/python"
           - os: ubuntu-latest
             python-version: "3.11"
             manylinux: "2_28"
             duckdb_explicit_platform: "linux_amd64"
+            interpreter: "/opt/python/cp311-cp311/bin/python"
           - os: ubuntu-latest
             python-version: "3.12"
             manylinux: "2_28"
             duckdb_explicit_platform: "linux_amd64"
+            interpreter: "/opt/python/cp312-cp312/bin/python"
           - os: windows-latest
             python-version: "3.9"
             manylinux: "auto"
             duckdb_explicit_platform: ""
+            interpreter: "python"
           - os: windows-latest
             python-version: "3.10"
             manylinux: "auto"
             duckdb_explicit_platform: ""
+            interpreter: "python"
           - os: windows-latest
             python-version: "3.11"
             manylinux: "auto"
             duckdb_explicit_platform: ""
+            interpreter: "python"
           - os: windows-latest
             python-version: "3.12"
             manylinux: "auto"
             duckdb_explicit_platform: ""
+            interpreter: "python"
           - os: macos-14
             python-version: "3.9"
             manylinux: "auto"
             duckdb_explicit_platform: ""
+            interpreter: "python"
           - os: macos-14
             python-version: "3.10"
             manylinux: "auto"
             duckdb_explicit_platform: ""
+            interpreter: "python"
           - os: macos-14
             python-version: "3.11"
             manylinux: "auto"
             duckdb_explicit_platform: ""
+            interpreter: "python"
           - os: macos-14
             python-version: "3.12"
             manylinux: "auto"
             duckdb_explicit_platform: ""
+            interpreter: "python"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -86,7 +98,7 @@ jobs:
           DUCKDB_EXPLICIT_PLATFORM: ${{ matrix.duckdb_explicit_platform }}
         with:
           command: build
-          args: --manifest-path python/Cargo.toml --release --out dist
+          args: --manifest-path python/Cargo.toml --release --out dist -i ${{ matrix.interpreter }}
           manylinux: ${{ matrix.manylinux }}
       - uses: actions/upload-artifact@v4
         with:
