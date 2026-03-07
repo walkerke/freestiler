@@ -91,7 +91,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.os }}-py${{ matrix.python-version }}
-          path: python/dist/*
+          path: dist/*
 
   build-sdist:
     name: Build sdist
@@ -108,7 +108,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: sdist
-          path: python/dist/*
+          path: dist/*
 
   publish-pypi:
     name: Publish to PyPI
