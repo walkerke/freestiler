@@ -62,6 +62,7 @@ pub fn generate_pmtiles_from_duckdb_query(
         property_names: prepared.prop_names.clone(),
         min_zoom: config.min_zoom,
         max_zoom: config.max_zoom,
+        geometry_type: Some("Point".to_string()),
     };
 
     let mut tile_spool = TileSpool::new()?;

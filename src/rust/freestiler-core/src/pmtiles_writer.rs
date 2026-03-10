@@ -25,6 +25,7 @@ pub struct LayerMeta {
     pub property_names: Vec<String>,
     pub min_zoom: u8,
     pub max_zoom: u8,
+    pub geometry_type: Option<String>,
 }
 
 /// Gzip-compress a tile at level 1 (fast)
@@ -74,12 +75,16 @@ pub fn write_pmtiles(
             for name in &l.property_names {
                 fields.insert(name.clone(), Value::String("string".to_string()));
             }
-            json!({
+            let mut layer_json = json!({
                 "id": l.name,
                 "fields": fields,
                 "minzoom": l.min_zoom,
                 "maxzoom": l.max_zoom
-            })
+            });
+            if let Some(ref gt) = l.geometry_type {
+                layer_json["geometry_type"] = Value::String(gt.clone());
+            }
+            layer_json
         })
         .collect();
 
@@ -238,12 +243,16 @@ fn build_metadata_bytes(layers: &[LayerMeta]) -> Result<Vec<u8>, String> {
             for name in &l.property_names {
                 fields.insert(name.clone(), Value::String("string".to_string()));
             }
-            json!({
+            let mut layer_json = json!({
                 "id": l.name,
                 "fields": fields,
                 "minzoom": l.min_zoom,
                 "maxzoom": l.max_zoom
-            })
+            });
+            if let Some(ref gt) = l.geometry_type {
+                layer_json["geometry_type"] = Value::String(gt.clone());
+            }
+            layer_json
         })
         .collect();
 

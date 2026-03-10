@@ -73,37 +73,23 @@ freestile(
 )
 ```
 
-### Viewing tiles with mapgl
+### Viewing tiles
 
-To view your tiles, use the [mapgl](https://walker-data.com/mapgl/) package. PMTiles need HTTP range requests, so you'll want to start a local file server first:
-
-``` bash
-npx http-server /tmp -p 8082 --cors -c-1
-```
-
-Then point mapgl at the URL:
+The quickest way to view a tileset is `view_tiles()`, which starts a local HTTP server and creates an interactive map in one step:
 
 ```{r}
 #| eval: false
-library(mapgl)
+view_tiles("us_bgs.pmtiles")
+```
 
-maplibre(hash = TRUE) |>
-  add_pmtiles_source(
-    id = "bgs-src",
-    url = "http://localhost:8082/us_bgs.pmtiles",
-    promote_id = "GEOID"
-  ) |>
-  add_fill_layer(
-    id = "bgs-fill",
-    source = "bgs-src",
-    source_layer = "bgs",
-    fill_color = "navy",
-    fill_opacity = 0.5,
-    hover_options = list(
-      fill_color = "#ffffcc",
-      fill_opacity = 0.9
-    )
-  )
+It auto-detects the layer name and geometry type from the PMTiles metadata, so it works out of the box for polygon, line, and point data.
+
+For more control over styling and layers, use `serve_tiles()` to start the server separately and build your map with [mapgl](https://walker-data.com/mapgl/). See the [Mapping with mapgl](mapping.html) article for a full walkthrough of this workflow.
+
+The built-in server handles CORS and HTTP range requests automatically. For tilesets larger than ~1 GB, you'll get better performance from an external server:
+
+``` bash
+npx http-server /path/to/tiles -p 8082 --cors -c-1
 ```
 
 ### MLT vs MVT

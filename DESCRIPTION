@@ -20,7 +20,10 @@ Imports:
 Suggests:
     DBI,
     duckdb,
+    httpuv,
+    jsonlite,
     knitr,
+    mapgl,
     quarto,
     rmarkdown,
     testthat (>= 3.0.0)

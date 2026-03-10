@@ -999,8 +999,11 @@ name = "freestiler"
 version = "0.1.0"
 dependencies = [
  "extendr-api",
+ "flate2",
  "freestiler-core",
  "geo-types",
+ "pmtiles2",
+ "serde_json",
 ]
 
 [[package]]

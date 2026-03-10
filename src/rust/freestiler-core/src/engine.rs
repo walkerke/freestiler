@@ -380,11 +380,19 @@ pub fn generate_pmtiles(
             if use_cluster && is_point_layer[li] {
                 names.push("point_count".to_string());
             }
+            // Detect predominant geometry type from first feature
+            let geometry_type = l.features.first().map(|f| match &f.geometry {
+                Geometry::Point(_) | Geometry::MultiPoint(_) => "Point".to_string(),
+                Geometry::LineString(_) | Geometry::MultiLineString(_) => "Line".to_string(),
+                Geometry::Polygon(_) | Geometry::MultiPolygon(_) => "Polygon".to_string(),
+            });
+
             pmtiles_writer::LayerMeta {
                 name: l.name.clone(),
                 property_names: names,
                 min_zoom: l.min_zoom,
                 max_zoom: l.max_zoom,
+                geometry_type,
             }
         })
         .collect();

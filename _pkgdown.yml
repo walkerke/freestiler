@@ -25,6 +25,8 @@ navbar:
       menu:
       - text: Getting Started
         href: articles/getting-started.html
+      - text: Mapping with mapgl
+        href: articles/mapping.html
       - text: "---"
       - text: MapLibre Tiles (MLT)
         href: articles/maplibre-tiles.html
@@ -40,6 +42,13 @@ reference:
   - freestile_query
   - freestile_layer
 
+- title: Viewing Tiles
+  desc: Serve and view PMTiles locally
+  contents:
+  - serve_tiles
+  - stop_server
+  - view_tiles
+
 - title: internal
   contents:
   - starts_with("rust_")
@@ -49,6 +58,11 @@ articles:
   navbar: ~
   contents:
   - getting-started
+
+- title: Mapping
+  navbar: ~
+  contents:
+  - mapping
 
 - title: Technical Details
   navbar: ~

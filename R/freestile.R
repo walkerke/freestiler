@@ -221,11 +221,8 @@ freestile <- function(
 
   if (!quiet) {
     size <- file.info(output)$size
-    message(sprintf(
-      "Created %s (%s)",
-      output,
-      .format_size(size)
-    ))
+    message(sprintf("Created %s (%s)", output, .format_size(size)))
+    message(sprintf("View with: view_tiles(\"%s\")", basename(output)))
   }
 
   invisible(output)
@@ -480,6 +477,7 @@ freestile_file <- function(
     if (!quiet) {
       size <- file.info(output)$size
       message(sprintf("Created %s (%s)", output, .format_size(size)))
+      message(sprintf("View with: view_tiles(\"%s\")", basename(output)))
     }
 
     return(invisible(output))
@@ -516,6 +514,7 @@ freestile_file <- function(
   if (!quiet) {
     size <- file.info(output)$size
     message(sprintf("Created %s (%s)", output, .format_size(size)))
+    message(sprintf("View with: view_tiles(\"%s\")", basename(output)))
   }
 
   invisible(output)
@@ -687,6 +686,7 @@ freestile_query <- function(
   if (!quiet) {
     size <- file.info(output)$size
     message(sprintf("Created %s (%s)", output, .format_size(size)))
+    message(sprintf("View with: view_tiles(\"%s\")", basename(output)))
   }
 
   invisible(output)

@@ -42,7 +42,8 @@ Carolina example from the Getting Started article:
 import geopandas as gpd
 from freestiler import freestile
 
-gdf = gpd.read_file("nc.shp")
+url = "https://raw.githubusercontent.com/r-spatial/sf/main/inst/gpkg/nc.gpkg"
+gdf = gpd.read_file(url)
 
 freestile(gdf, "nc_counties.pmtiles", layer_name="counties")
 ```
@@ -112,6 +113,13 @@ GL JS](https://maplibre.org/) 5.17+ and the [PMTiles
 protocol](https://docs.protomaps.com/pmtiles/). If you’re also an R
 user, the [mapgl](https://walker-data.com/mapgl/) package is the most
 reliable local viewing path right now.
+
+My recommendation for Python users: try the Positron IDE, which supports
+both Python and R simultaneously. You’ll be able to do your tiling in
+Python then easily move over to R for mapping with the mapgl package.
+Read the [mapping
+vignette](https://walker-data.com/freestiler/articles/mapping.md) to
+learn more.
 
 ### R vs Python API
 

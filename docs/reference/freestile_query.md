@@ -106,8 +106,9 @@ freestile_query(
 
 - streaming:
 
-  Character. DuckDB query execution mode: `"auto"` (default),
-  `"always"`, or `"never"`.
+  Character. DuckDB query execution mode: `"auto"` (default) enables the
+  streaming point pipeline for large queries, `"always"` forces it, and
+  `"never"` uses the existing in-memory path.
 
 ## Value
 

@@ -42,6 +42,7 @@
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-articles" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Articles</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-articles">
 <li><a class="dropdown-item" href="articles/getting-started.html">Getting Started</a></li>
+    <li><a class="dropdown-item" href="articles/mapping.html">Mapping with mapgl</a></li>
     <li><hr class="dropdown-divider"></li>
     <li><a class="dropdown-item" href="articles/maplibre-tiles.html">MapLibre Tiles (MLT)</a></li>
     <li><a class="dropdown-item" href="articles/python.html">Python Setup</a></li>
@@ -123,14 +124,19 @@
 <div class="section level2">
 <h2 id="viewing-tiles">Viewing tiles<a class="anchor" aria-label="anchor" href="#viewing-tiles"></a>
 </h2>
-<p>Use <a href="https://walker-data.com/mapgl/" class="external-link">mapgl</a> to view your tileset. PMTiles need HTTP range requests, so you’ll want to start a local server first (e.g. <code>npx http-server /tmp -p 8082 --cors -c-1</code>):</p>
+<p>The quickest way to view a tileset is <code><a href="reference/view_tiles.html">view_tiles()</a></code>, which starts a local server and opens an interactive map:</p>
 <div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="fu"><a href="reference/view_tiles.html">view_tiles</a></span><span class="op">(</span><span class="st">"us_bgs.pmtiles"</span><span class="op">)</span></span></code></pre></div>
+<p>For more control, use <code><a href="reference/serve_tiles.html">serve_tiles()</a></code> to start a local server and build your map with <a href="https://walker-data.com/mapgl/" class="external-link">mapgl</a>:</p>
+<div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://walker-data.com/mapgl/" class="external-link">mapgl</a></span><span class="op">)</span></span>
+<span></span>
+<span><span class="fu"><a href="reference/serve_tiles.html">serve_tiles</a></span><span class="op">(</span><span class="st">"us_bgs.pmtiles"</span><span class="op">)</span></span>
 <span></span>
 <span><span class="fu"><a href="https://walker-data.com/mapgl/reference/maplibre.html" class="external-link">maplibre</a></span><span class="op">(</span>hash <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span> <span class="op">|&gt;</span></span>
 <span>  <span class="fu"><a href="https://walker-data.com/mapgl/reference/add_pmtiles_source.html" class="external-link">add_pmtiles_source</a></span><span class="op">(</span></span>
 <span>    id <span class="op">=</span> <span class="st">"bgs-src"</span>,</span>
-<span>    url <span class="op">=</span> <span class="st">"http://localhost:8082/us_bgs.pmtiles"</span>,</span>
+<span>    url <span class="op">=</span> <span class="st">"http://localhost:8080/us_bgs.pmtiles"</span>,</span>
 <span>    promote_id <span class="op">=</span> <span class="st">"GEOID"</span></span>
 <span>  <span class="op">)</span> <span class="op">|&gt;</span></span>
 <span>  <span class="fu"><a href="https://walker-data.com/mapgl/reference/add_fill_layer.html" class="external-link">add_fill_layer</a></span><span class="op">(</span></span>
@@ -144,19 +150,20 @@
 <span>      fill_opacity <span class="op">=</span> <span class="fl">0.9</span></span>
 <span>    <span class="op">)</span></span>
 <span>  <span class="op">)</span></span></code></pre></div>
+<p>The built-in server handles CORS and range requests automatically. For tilesets larger than ~1 GB, use an external server like <code>npx http-server /path --cors -c-1</code> for better performance. See the <a href="https://walker-data.com/freestiler/articles/mapping.html">Mapping with mapgl</a> article for a full walkthrough.</p>
 </div>
 <div class="section level2">
 <h2 id="duckdb-queries">DuckDB queries<a class="anchor" aria-label="anchor" href="#duckdb-queries"></a>
 </h2>
 <p>If your data lives in DuckDB, <code><a href="reference/freestile_query.html">freestile_query()</a></code> lets you filter, join, and transform with SQL before tiling:</p>
-<div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="reference/freestile_query.html">freestile_query</a></span><span class="op">(</span></span>
 <span>  query <span class="op">=</span> <span class="st">"SELECT * FROM read_parquet('blocks.parquet') WHERE state = 'NC'"</span>,</span>
 <span>  output <span class="op">=</span> <span class="st">"nc_blocks.pmtiles"</span>,</span>
 <span>  layer_name <span class="op">=</span> <span class="st">"blocks"</span></span>
 <span><span class="op">)</span></span></code></pre></div>
 <p>For very large point datasets, the streaming pipeline avoids loading the full result into memory. On a recent run, <code><a href="reference/freestile_query.html">freestile_query()</a></code> streamed 146 million US job points from DuckDB into a 2.3 GB PMTiles archive in about 12 minutes:</p>
-<div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="reference/freestile_query.html">freestile_query</a></span><span class="op">(</span></span>
 <span>  query <span class="op">=</span> <span class="st">"SELECT naics, state, ST_Point(lon, lat) AS geometry FROM jobs_dots"</span>,</span>
 <span>  output <span class="op">=</span> <span class="st">"us_jobs_dots.pmtiles"</span>,</span>
@@ -176,7 +183,7 @@
 <h2 id="direct-file-input">Direct file input<a class="anchor" aria-label="anchor" href="#direct-file-input"></a>
 </h2>
 <p>You can tile spatial files without loading them into R first:</p>
-<div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="co"># GeoParquet</span></span>
 <span><span class="fu"><a href="reference/freestile_file.html">freestile_file</a></span><span class="op">(</span><span class="st">"census_blocks.parquet"</span>, <span class="st">"blocks.pmtiles"</span><span class="op">)</span></span>
 <span></span>
@@ -186,7 +193,7 @@
 <div class="section level2">
 <h2 id="multi-layer-tilesets">Multi-layer tilesets<a class="anchor" aria-label="anchor" href="#multi-layer-tilesets"></a>
 </h2>
-<div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb11"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">pts</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://r-spatial.github.io/sf/reference/geos_unary.html" class="external-link">st_centroid</a></span><span class="op">(</span><span class="va">nc</span><span class="op">)</span></span>
 <span></span>
 <span><span class="fu"><a href="reference/freestile.html">freestile</a></span><span class="op">(</span></span>
@@ -208,6 +215,8 @@
 <ul>
 <li>
 <a href="https://walker-data.com/freestiler/articles/getting-started.html">Getting Started</a> - full tutorial</li>
+<li>
+<a href="https://walker-data.com/freestiler/articles/mapping.html">Mapping with mapgl</a> - viewing and styling tiles with mapgl</li>
 <li>
 <a href="https://walker-data.com/freestiler/articles/maplibre-tiles.html">MapLibre Tiles (MLT)</a> - MLT vs MVT and when to use each</li>
 <li>

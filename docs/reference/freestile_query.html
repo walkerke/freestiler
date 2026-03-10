@@ -27,6 +27,7 @@ options(freestiler.duckdb_backend = &quot;auto&quot;|&quot;rust&quot;|&quot;r&qu
 <li class="nav-item dropdown">
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-articles" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Articles</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-articles"><li><a class="dropdown-item" href="../articles/getting-started.html">Getting Started</a></li>
+    <li><a class="dropdown-item" href="../articles/mapping.html">Mapping with mapgl</a></li>
     <li><hr class="dropdown-divider"></li>
     <li><a class="dropdown-item" href="../articles/maplibre-tiles.html">MapLibre Tiles (MLT)</a></li>
     <li><a class="dropdown-item" href="../articles/python.html">Python Setup</a></li>
@@ -154,8 +155,9 @@ grid (default TRUE).</p></dd>
 
 
 <dt id="arg-streaming">streaming<a class="anchor" aria-label="anchor" href="#arg-streaming"></a></dt>
-<dd><p>Character. DuckDB query execution mode: <code>"auto"</code> (default),
-<code>"always"</code>, or <code>"never"</code>.</p></dd>
+<dd><p>Character. DuckDB query execution mode: <code>"auto"</code> (default)
+enables the streaming point pipeline for large queries, <code>"always"</code> forces
+it, and <code>"never"</code> uses the existing in-memory path.</p></dd>
 
 </dl></div>
     <div class="section level2">

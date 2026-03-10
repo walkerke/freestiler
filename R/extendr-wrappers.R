@@ -82,5 +82,10 @@ rust_freestile_duckdb <- function(input_path, output_path, layer_name, tile_form
 #' @keywords internal
 rust_freestile_duckdb_query <- function(sql, db_path, output_path, layer_name, tile_format, min_zoom, max_zoom, base_zoom, do_simplify, drop_rate, cluster_distance, cluster_maxzoom, do_coalesce, quiet, streaming_mode) .Call(wrap__rust_freestile_duckdb_query, sql, db_path, output_path, layer_name, tile_format, min_zoom, max_zoom, base_zoom, do_simplify, drop_rate, cluster_distance, cluster_maxzoom, do_coalesce, quiet, streaming_mode)
 
+#' Read PMTiles header and metadata as a JSON string
+#' @param path Path to the .pmtiles file
+#' @keywords internal
+rust_pmtiles_metadata <- function(path) .Call(wrap__rust_pmtiles_metadata, path)
+
 
 # nolint end

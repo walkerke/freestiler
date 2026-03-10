@@ -7,6 +7,7 @@
 <url><loc>https://walker-data.com/freestiler/articles/getting-started.html</loc></url>
 <url><loc>https://walker-data.com/freestiler/articles/index.html</loc></url>
 <url><loc>https://walker-data.com/freestiler/articles/maplibre-tiles.html</loc></url>
+<url><loc>https://walker-data.com/freestiler/articles/mapping.html</loc></url>
 <url><loc>https://walker-data.com/freestiler/articles/python.html</loc></url>
 <url><loc>https://walker-data.com/freestiler/authors.html</loc></url>
 <url><loc>https://walker-data.com/freestiler/index.html</loc></url>
@@ -21,5 +22,9 @@
 <url><loc>https://walker-data.com/freestiler/reference/rust_freestile_duckdb.html</loc></url>
 <url><loc>https://walker-data.com/freestiler/reference/rust_freestile_duckdb_query.html</loc></url>
 <url><loc>https://walker-data.com/freestiler/reference/rust_freestile_file.html</loc></url>
+<url><loc>https://walker-data.com/freestiler/reference/rust_pmtiles_metadata.html</loc></url>
+<url><loc>https://walker-data.com/freestiler/reference/serve_tiles.html</loc></url>
+<url><loc>https://walker-data.com/freestiler/reference/stop_server.html</loc></url>
+<url><loc>https://walker-data.com/freestiler/reference/view_tiles.html</loc></url>
 </urlset>
 

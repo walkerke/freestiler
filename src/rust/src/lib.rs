@@ -1,5 +1,6 @@
 use extendr_api::prelude::*;
 use geo_types::{Coord, LineString, MultiLineString, MultiPolygon, Point, Polygon};
+use std::io::{Read, Seek, SeekFrom};
 use std::time::Instant;
 
 use freestiler_core::engine::{self, ProgressReporter, TileConfig};
@@ -988,10 +989,89 @@ fn rust_freestile_duckdb_query(
     }
 }
 
+/// Read PMTiles header and metadata as a JSON string
+/// @param path Path to the .pmtiles file
+/// @export
+#[extendr]
+fn rust_pmtiles_metadata(path: &str) -> String {
+    use flate2::read::GzDecoder;
+    use pmtiles2::Header;
+    use std::io::Cursor;
+
+    let mut file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(e) => return format!("Error: Cannot open {}: {}", path, e),
+    };
+
+    // Read the raw 127-byte header
+    let mut header_bytes = [0u8; 127];
+    if let Err(e) = file.read_exact(&mut header_bytes) {
+        return format!("Error: Cannot read PMTiles header: {}", e);
+    }
+
+    // Save the real tile_type byte (offset 99) before patching for pmtiles2
+    let tile_type_byte = header_bytes[99];
+    let tile_format = match tile_type_byte {
+        0x01 => "mvt",
+        0x06 => "mlt",
+        _ => "unknown",
+    };
+
+    // Patch tile_type to MVT (0x01) so pmtiles2 can parse the header
+    // (pmtiles2 doesn't know about the MLT tile type 0x06)
+    header_bytes[99] = 0x01;
+
+    let header = match Header::from_reader(&mut Cursor::new(&header_bytes)) {
+        Ok(h) => h,
+        Err(e) => return format!("Error: Invalid PMTiles header: {}", e),
+    };
+
+    // Read and decompress metadata JSON
+    let metadata_json = if header.json_metadata_length > 0 {
+        let mut compressed = vec![0u8; header.json_metadata_length as usize];
+        if file
+            .seek(SeekFrom::Start(header.json_metadata_offset))
+            .is_ok()
+            && file.read_exact(&mut compressed).is_ok()
+        {
+            let mut decoder = GzDecoder::new(&compressed[..]);
+            let mut json_str = String::new();
+            if decoder.read_to_string(&mut json_str).is_ok() {
+                serde_json::from_str::<serde_json::Value>(&json_str)
+                    .unwrap_or(serde_json::Value::Null)
+            } else {
+                serde_json::Value::Null
+            }
+        } else {
+            serde_json::Value::Null
+        }
+    } else {
+        serde_json::Value::Null
+    };
+
+    let result = serde_json::json!({
+        "min_zoom": header.min_zoom,
+        "max_zoom": header.max_zoom,
+        "center_zoom": header.center_zoom,
+        "min_longitude": header.min_pos.longitude,
+        "min_latitude": header.min_pos.latitude,
+        "max_longitude": header.max_pos.longitude,
+        "max_latitude": header.max_pos.latitude,
+        "center_longitude": header.center_pos.longitude,
+        "center_latitude": header.center_pos.latitude,
+        "tile_format": tile_format,
+        "num_tiles": header.num_addressed_tiles,
+        "metadata": metadata_json,
+    });
+
+    serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string())
+}
+
 extendr_module! {
     mod freestiler;
     fn rust_freestile;
     fn rust_freestile_file;
     fn rust_freestile_duckdb;
     fn rust_freestile_duckdb_query;
+    fn rust_pmtiles_metadata;
 }

@@ -42,6 +42,7 @@
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-articles" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Articles</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-articles">
 <li><a class="dropdown-item" href="../articles/getting-started.html">Getting Started</a></li>
+    <li><a class="dropdown-item" href="../articles/mapping.html">Mapping with mapgl</a></li>
     <li><hr class="dropdown-divider"></li>
     <li><a class="dropdown-item" href="../articles/maplibre-tiles.html">MapLibre Tiles (MLT)</a></li>
     <li><a class="dropdown-item" href="../articles/python.html">Python Setup</a></li>
@@ -96,9 +97,10 @@
 <div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> geopandas <span class="im">as</span> gpd</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> freestiler <span class="im">import</span> freestile</span>
 <span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>gdf <span class="op">=</span> gpd.read_file(<span class="st">"nc.shp"</span>)</span>
-<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>freestile(gdf, <span class="st">"nc_counties.pmtiles"</span>, layer_name<span class="op">=</span><span class="st">"counties"</span>)</span></code></pre></div>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>url <span class="op">=</span> <span class="st">"https://raw.githubusercontent.com/r-spatial/sf/main/inst/gpkg/nc.gpkg"</span></span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>gdf <span class="op">=</span> gpd.read_file(url)</span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a>freestile(gdf, <span class="st">"nc_counties.pmtiles"</span>, layer_name<span class="op">=</span><span class="st">"counties"</span>)</span></code></pre></div>
 <p>Multi-layer tilesets use a dictionary instead of R’s named list:</p>
 <div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> freestiler <span class="im">import</span> freestile, freestile_layer</span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a></span>
@@ -132,6 +134,7 @@
 <p>One important caveat: Python’s built-in <code>http.server</code> does not support byte-range requests, so it won’t work as a PMTiles server. You’ll want to use a real static file server instead:</p>
 <div class="sourceCode" id="cb6"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="ex">npx</span> http-server /path/to/tiles <span class="at">-p</span> 8082 <span class="at">--cors</span> <span class="at">-c-1</span></span></code></pre></div>
 <p>You can view any PMTiles file (MLT or MVT) in the browser with <a href="https://maplibre.org/" class="external-link">MapLibre GL JS</a> 5.17+ and the <a href="https://docs.protomaps.com/pmtiles/" class="external-link">PMTiles protocol</a>. If you’re also an R user, the <a href="https://walker-data.com/mapgl/" class="external-link">mapgl</a> package is the most reliable local viewing path right now.</p>
+<p>My recommendation for Python users: try the Positron IDE, which supports both Python and R simultaneously. You’ll be able to do your tiling in Python then easily move over to R for mapping with the mapgl package. Read the <a href="mapping.html">mapping vignette</a> to learn more.</p>
 </section><section class="level3"><h3 id="r-vs-python-api">R vs Python API<a class="anchor" aria-label="anchor" href="#r-vs-python-api"></a>
 </h3>
 <table class="table caption-top">

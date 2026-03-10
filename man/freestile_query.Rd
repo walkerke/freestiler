@@ -65,8 +65,9 @@ grid (default TRUE).}
 \code{query}, for example \code{"EPSG:4326"} or \code{"EPSG:4267"}. Used only by the R
 \code{duckdb} fallback; ignored by the Rust DuckDB backend.}
 
-\item{streaming}{Character. DuckDB query execution mode: \code{"auto"} (default),
-\code{"always"}, or \code{"never"}.}
+\item{streaming}{Character. DuckDB query execution mode: \code{"auto"} (default)
+enables the streaming point pipeline for large queries, \code{"always"} forces
+it, and \code{"never"} uses the existing in-memory path.}
 }
 \value{
 The output file path (invisibly).

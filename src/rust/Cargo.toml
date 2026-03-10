@@ -21,6 +21,11 @@ freestiler-core = { path = "freestiler-core" }
 # Needed directly for sfg parsing (geo-types geometry constructors)
 geo-types = "0.7"
 
+# Needed for PMTiles metadata reading
+pmtiles2 = "0.3"
+flate2 = "1"
+serde_json = "1"
+
 [profile.release]
 lto = true
 codegen-units = 1

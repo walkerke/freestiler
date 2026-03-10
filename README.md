@@ -67,15 +67,23 @@ freestile(
 
 ## Viewing tiles
 
-Use [mapgl](https://walker-data.com/mapgl/) to view your tileset. PMTiles need HTTP range requests, so you'll want to start a local server first (e.g. `npx http-server /tmp -p 8082 --cors -c-1`):
+The quickest way to view a tileset is `view_tiles()`, which starts a local server and opens an interactive map:
+
+```r
+view_tiles("us_bgs.pmtiles")
+```
+
+For more control, use `serve_tiles()` to start a local server and build your map with [mapgl](https://walker-data.com/mapgl/):
 
 ```r
 library(mapgl)
 
+serve_tiles("us_bgs.pmtiles")
+
 maplibre(hash = TRUE) |>
   add_pmtiles_source(
     id = "bgs-src",
-    url = "http://localhost:8082/us_bgs.pmtiles",
+    url = "http://localhost:8080/us_bgs.pmtiles",
     promote_id = "GEOID"
   ) |>
   add_fill_layer(
@@ -90,6 +98,8 @@ maplibre(hash = TRUE) |>
     )
   )
 ```
+
+The built-in server handles CORS and range requests automatically. For tilesets larger than ~1 GB, use an external server like `npx http-server /path --cors -c-1` for better performance. See the [Mapping with mapgl](https://walker-data.com/freestiler/articles/mapping.html) article for a full walkthrough.
 
 ## DuckDB queries
 
@@ -155,5 +165,6 @@ freestiler defaults to [MapLibre Tiles (MLT)](https://github.com/maplibre/maplib
 ## Learn more
 
 - [Getting Started](https://walker-data.com/freestiler/articles/getting-started.html) - full tutorial
+- [Mapping with mapgl](https://walker-data.com/freestiler/articles/mapping.html) - viewing and styling tiles with mapgl
 - [MapLibre Tiles (MLT)](https://walker-data.com/freestiler/articles/maplibre-tiles.html) - MLT vs MVT and when to use each
 - [Python Setup](https://walker-data.com/freestiler/articles/python.html) - Python installation and usage

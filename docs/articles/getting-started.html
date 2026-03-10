@@ -42,6 +42,7 @@
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-articles" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Articles</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-articles">
 <li><a class="dropdown-item" href="../articles/getting-started.html">Getting Started</a></li>
+    <li><a class="dropdown-item" href="../articles/mapping.html">Mapping with mapgl</a></li>
     <li><hr class="dropdown-divider"></li>
     <li><a class="dropdown-item" href="../articles/maplibre-tiles.html">MapLibre Tiles (MLT)</a></li>
     <li><a class="dropdown-item" href="../articles/python.html">Python Setup</a></li>
@@ -121,33 +122,17 @@ Created nc_counties.pmtiles (65.2 KB)</code></pre>
 <span>  max_zoom <span class="op">=</span> <span class="fl">12</span></span>
 <span><span class="op">)</span></span></code></pre></div>
 </div>
-</section><section class="level3"><h3 id="viewing-tiles-with-mapgl">Viewing tiles with mapgl<a class="anchor" aria-label="anchor" href="#viewing-tiles-with-mapgl"></a>
+</section><section class="level3"><h3 id="viewing-tiles">Viewing tiles<a class="anchor" aria-label="anchor" href="#viewing-tiles"></a>
 </h3>
-<p>To view your tiles, use the <a href="https://walker-data.com/mapgl/" class="external-link">mapgl</a> package. PMTiles need HTTP range requests, so you’ll want to start a local file server first:</p>
-<div class="sourceCode" id="cb5"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="ex">npx</span> http-server /tmp <span class="at">-p</span> 8082 <span class="at">--cors</span> <span class="at">-c-1</span></span></code></pre></div>
-<p>Then point mapgl at the URL:</p>
+<p>The quickest way to view a tileset is <code><a href="../reference/view_tiles.html">view_tiles()</a></code>, which starts a local HTTP server and creates an interactive map in one step:</p>
 <div class="cell">
-<div class="sourceCode cell-code" id="cb6"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://walker-data.com/mapgl/" class="external-link">mapgl</a></span><span class="op">)</span></span>
-<span></span>
-<span><span class="fu"><a href="https://walker-data.com/mapgl/reference/maplibre.html" class="external-link">maplibre</a></span><span class="op">(</span>hash <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span> <span class="op">|&gt;</span></span>
-<span>  <span class="fu"><a href="https://walker-data.com/mapgl/reference/add_pmtiles_source.html" class="external-link">add_pmtiles_source</a></span><span class="op">(</span></span>
-<span>    id <span class="op">=</span> <span class="st">"bgs-src"</span>,</span>
-<span>    url <span class="op">=</span> <span class="st">"http://localhost:8082/us_bgs.pmtiles"</span>,</span>
-<span>    promote_id <span class="op">=</span> <span class="st">"GEOID"</span></span>
-<span>  <span class="op">)</span> <span class="op">|&gt;</span></span>
-<span>  <span class="fu"><a href="https://walker-data.com/mapgl/reference/add_fill_layer.html" class="external-link">add_fill_layer</a></span><span class="op">(</span></span>
-<span>    id <span class="op">=</span> <span class="st">"bgs-fill"</span>,</span>
-<span>    source <span class="op">=</span> <span class="st">"bgs-src"</span>,</span>
-<span>    source_layer <span class="op">=</span> <span class="st">"bgs"</span>,</span>
-<span>    fill_color <span class="op">=</span> <span class="st">"navy"</span>,</span>
-<span>    fill_opacity <span class="op">=</span> <span class="fl">0.5</span>,</span>
-<span>    hover_options <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span></span>
-<span>      fill_color <span class="op">=</span> <span class="st">"#ffffcc"</span>,</span>
-<span>      fill_opacity <span class="op">=</span> <span class="fl">0.9</span></span>
-<span>    <span class="op">)</span></span>
-<span>  <span class="op">)</span></span></code></pre></div>
+<div class="sourceCode cell-code" id="cb5"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="fu"><a href="../reference/view_tiles.html">view_tiles</a></span><span class="op">(</span><span class="st">"us_bgs.pmtiles"</span><span class="op">)</span></span></code></pre></div>
 </div>
+<p>It auto-detects the layer name and geometry type from the PMTiles metadata, so it works out of the box for polygon, line, and point data.</p>
+<p>For more control over styling and layers, use <code><a href="../reference/serve_tiles.html">serve_tiles()</a></code> to start the server separately and build your map with <a href="https://walker-data.com/mapgl/" class="external-link">mapgl</a>. See the <a href="mapping.html">Mapping with mapgl</a> article for a full walkthrough of this workflow.</p>
+<p>The built-in server handles CORS and HTTP range requests automatically. For tilesets larger than ~1 GB, you’ll get better performance from an external server:</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="ex">npx</span> http-server /path/to/tiles <span class="at">-p</span> 8082 <span class="at">--cors</span> <span class="at">-c-1</span></span></code></pre></div>
 </section><section class="level3"><h3 id="mlt-vs-mvt">MLT vs MVT<a class="anchor" aria-label="anchor" href="#mlt-vs-mvt"></a>
 </h3>
 <p>The default tile format is MLT, which tends to produce smaller files for polygon-heavy data. If you need maximum viewer compatibility - particularly for Python viewers or older MapLibre versions - use MVT:</p>
