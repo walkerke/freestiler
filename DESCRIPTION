@@ -5,10 +5,10 @@ Date: 2026-04-13
 Authors@R: c(
     person("Kyle", "Walker", , "kyle@walker-data.com", role = c("aut", "cre"))
   )
-Description: Create vector tile archives in PMTiles format from sf spatial
-    data frames. Supports Mapbox Vector Tile (MVT) and MapLibre Tile (MLT)
-    output formats. Uses a Rust backend via 'extendr' for fast, in-memory
-    tiling with zero external system dependencies.
+Description: Create vector tile archives in 'PMTiles' format from 'sf' spatial
+    data frames. Supports 'Mapbox Vector Tile' ('MVT') and 'MapLibre Tile'
+    ('MLT') output formats. Uses a 'Rust' backend via 'extendr' for fast,
+    in-memory tiling with zero external system dependencies.
 License: MIT + file LICENSE
 URL: https://walker-data.com/freestiler/,
     https://github.com/walkerke/freestiler/
@@ -19,12 +19,14 @@ RoxygenNote: 7.3.3
 Imports:
     sf
 Suggests:
+    arrow,
     DBI,
     duckdb,
     httpuv,
     jsonlite,
     mapgl,
-    testthat (>= 3.0.0)
+    testthat (>= 3.0.0),
+    withr
 Config/testthat/edition: 3
 Config/rextendr/version: 0.4.2.9000
 SystemRequirements: Cargo (Rust's package manager), rustc >= 1.70

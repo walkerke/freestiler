@@ -95,7 +95,7 @@ if (is_not_cran) {
 # currently target GNU toolchains, and bundled libduckdb-sys is not reliable
 # there yet. Set FREESTILER_DUCKDB=true to force-enable, or false/0/no/off to
 # disable explicitly.
-duckdb_default <- if (is_wasm) "false" else if (is_windows) "false" else "true"
+duckdb_default <- if (is_wasm) "false" else if (is_windows) "false" else if (!is_not_cran) "false" else "true"
 duckdb_env <- tolower(trimws(Sys.getenv("FREESTILER_DUCKDB", unset = duckdb_default)))
 duckdb_enabled <- !duckdb_env %in% c("0", "false", "no", "off")
 
