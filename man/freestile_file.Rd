@@ -8,7 +8,7 @@ freestile_file(
   input,
   output,
   layer_name = NULL,
-  tile_format = "mlt",
+  tile_format = "mvt",
   min_zoom = 0L,
   max_zoom = 14L,
   base_zoom = NULL,
@@ -30,7 +30,7 @@ freestile_file(
 \item{layer_name}{Character. Name for the tile layer. If NULL, derived from
 the output filename.}
 
-\item{tile_format}{Character. \code{"mlt"} (default) or \code{"mvt"}.}
+\item{tile_format}{Character. \code{"mvt"} (default) or \code{"mlt"}.}
 
 \item{min_zoom}{Integer. Minimum zoom level (default 0).}
 

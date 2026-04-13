@@ -53,7 +53,7 @@ view_tiles <- function(
   input <- normalizePath(input, mustWork = TRUE)
 
   # Read metadata from the PMTiles file
-  meta <- .pmtiles_metadata(input)
+  meta <- pmtiles_metadata(input)
   if (is.null(meta)) {
     stop("Cannot read PMTiles metadata from: ", input, call. = FALSE)
   }
@@ -166,14 +166,26 @@ view_tiles <- function(
   m
 }
 
-#' Read PMTiles metadata (internal)
+#' Read PMTiles metadata
 #'
-#' Calls the Rust backend to read the PMTiles header and metadata JSON.
+#' Reads the header and JSON metadata from a PMTiles file.
 #'
-#' @param path Path to a .pmtiles file.
-#' @return A list with header fields and nested metadata, or NULL on error.
-#' @noRd
-.pmtiles_metadata <- function(path) {
+#' @param path Path to a \code{.pmtiles} file.
+#' @return A list with header fields (zoom levels, bounds, tile format, etc.)
+#'   and a nested \code{metadata} element containing vector layer information,
+#'   or \code{NULL} on error.
+#'
+#' @examples
+#' \dontrun{
+#' meta <- pmtiles_metadata("my_tiles.pmtiles")
+#' meta$min_zoom
+#' meta$max_zoom
+#' meta$metadata$vector_layers
+#' }
+#'
+#' @export
+#' @keywords internal
+pmtiles_metadata <- function(path) {
   json_str <- rust_pmtiles_metadata(path)
   if (startsWith(json_str, "Error:")) {
     warning(json_str, call. = FALSE)
