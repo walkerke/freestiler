@@ -20,7 +20,9 @@ pub fn auto_threshold() -> u64 {
 
 pub fn query_feature_count(db_path: Option<&str>, sql: &str) -> Result<u64, String> {
     let conn = open_connection(db_path)?;
-    let count_sql = format!("SELECT COUNT(*) FROM ({}) AS __freestiler_count", sql);
+    let (setup_stmts, query) = crate::file_input::split_sql_statements(sql);
+    crate::file_input::run_setup_statements(&conn, &setup_stmts)?;
+    let count_sql = format!("SELECT COUNT(*) FROM ({}) AS __freestiler_count", query);
     conn.query_row(&count_sql, params![], |row| row.get::<_, u64>(0))
         .map_err(|e| format!("Cannot count query rows: {}", e))
 }
@@ -38,7 +40,9 @@ pub fn generate_pmtiles_from_duckdb_query(
     }
 
     let conn = open_connection(db_path)?;
-    let prepared = PreparedPointQuery::new(&conn, sql)?;
+    let (setup_stmts, query) = crate::file_input::split_sql_statements(sql);
+    crate::file_input::run_setup_statements(&conn, &setup_stmts)?;
+    let prepared = PreparedPointQuery::new(&conn, &query)?;
     let points_table = prepared.materialize_points_table(&conn)?;
     let stats = points_table.compute_stats(&conn)?;
 

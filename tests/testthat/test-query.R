@@ -113,6 +113,37 @@ test_that("freestile_query streaming mode rejects non-point geometries", {
   )
 })
 
+test_that("freestile_query supports multi-statement SQL via Rust backend", {
+  skip_on_cran()
+  skip_if_not_installed("sf")
+  skip_if_not(.has_rust_duckdb_test(), message = "Rust DuckDB not compiled")
+
+  withr::local_options(freestiler.duckdb_backend = "rust")
+
+  nc_path <- system.file("shape/nc.shp", package = "sf")
+  output <- tempfile(fileext = ".pmtiles")
+  on.exit(unlink(output), add = TRUE)
+
+  # Multi-statement: CREATE VIEW then SELECT from it
+  multi_sql <- sprintf(paste(
+    "CREATE OR REPLACE VIEW nc_view AS SELECT * FROM ST_Read('%s');",
+    "SELECT * FROM nc_view"
+  ), nc_path)
+
+  result <- freestile_query(
+    query = multi_sql,
+    output = output,
+    layer_name = "counties",
+    tile_format = "mvt",
+    min_zoom = 0,
+    max_zoom = 6,
+    quiet = TRUE
+  )
+
+  expect_true(file.exists(output))
+  expect_true(file.info(output)$size > 0)
+})
+
 # --- R duckdb package fallback tests (skip if not installed) ---
 
 test_that("freestile_query creates PMTiles via R duckdb fallback", {
@@ -141,6 +172,38 @@ test_that("freestile_query creates PMTiles via R duckdb fallback", {
   expect_true(file.exists(output))
   expect_true(file.info(output)$size > 0)
   expect_equal(result, output)
+})
+
+test_that("freestile_query supports multi-statement SQL via R duckdb fallback", {
+  skip_on_cran()
+  skip_if_not_installed("sf")
+  skip_if_not_installed("duckdb")
+  skip_if_not_installed("DBI")
+
+  withr::local_options(freestiler.duckdb_backend = "r")
+
+  nc_path <- system.file("shape/nc.shp", package = "sf")
+  output <- tempfile(fileext = ".pmtiles")
+  on.exit(unlink(output), add = TRUE)
+
+  multi_sql <- sprintf(paste(
+    "CREATE OR REPLACE VIEW nc_view AS SELECT * FROM ST_Read('%s');",
+    "SELECT * FROM nc_view"
+  ), nc_path)
+
+  result <- freestile_query(
+    query = multi_sql,
+    output = output,
+    source_crs = "EPSG:4267",
+    layer_name = "counties",
+    tile_format = "mvt",
+    min_zoom = 0,
+    max_zoom = 6,
+    quiet = TRUE
+  )
+
+  expect_true(file.exists(output))
+  expect_true(file.info(output)$size > 0)
 })
 
 test_that("freestile_file with engine='duckdb' detects CRS and reprojects via R fallback", {

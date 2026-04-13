@@ -522,7 +522,9 @@ def freestile_query(
     ----------
     query : str
         A SQL query that returns a geometry column. DuckDB spatial functions
-        like ``ST_Read()`` and ``read_parquet()`` are available.
+        like ``ST_Read()`` and ``read_parquet()`` are available. Multi-statement
+        SQL is supported: setup statements (e.g., ``LOAD h3;``) are executed
+        first, then the final SELECT is used for tiling.
     output : str or Path
         Output path for the .pmtiles file.
     db_path : str, optional

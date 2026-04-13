@@ -6,6 +6,77 @@
 use crate::tiler::{Feature, Geometry, LayerData, PropertyValue};
 
 // ---------------------------------------------------------------------------
+// Multi-statement SQL support (shared by duckdb file_input and streaming)
+// ---------------------------------------------------------------------------
+
+/// Split multi-statement SQL into setup statements and a final query.
+///
+/// Statements like `LOAD h3;` or `CREATE TEMP TABLE ...;` are returned as
+/// setup, and the last non-empty statement is the query to DESCRIBE/execute.
+pub(crate) fn split_sql_statements(sql: &str) -> (Vec<String>, String) {
+    let parts: Vec<&str> = sql.split(';').collect();
+    let non_empty: Vec<String> = parts
+        .iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if non_empty.len() <= 1 {
+        return (Vec::new(), sql.trim().trim_end_matches(';').to_string());
+    }
+    let setup = non_empty[..non_empty.len() - 1].to_vec();
+    let query = non_empty.last().unwrap().clone();
+    (setup, query)
+}
+
+/// Execute setup statements (LOAD, CREATE, etc.) on a DuckDB connection.
+#[cfg(feature = "duckdb")]
+pub(crate) fn run_setup_statements(
+    conn: &duckdb::Connection,
+    stmts: &[String],
+) -> Result<(), String> {
+    for stmt in stmts {
+        conn.execute_batch(stmt)
+            .map_err(|e| format!("Setup statement failed: {}", e))?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_split_single_statement() {
+        let (setup, query) = split_sql_statements("SELECT * FROM foo");
+        assert!(setup.is_empty());
+        assert_eq!(query, "SELECT * FROM foo");
+    }
+
+    #[test]
+    fn test_split_single_with_trailing_semicolon() {
+        let (setup, query) = split_sql_statements("SELECT * FROM foo;");
+        assert!(setup.is_empty());
+        assert_eq!(query, "SELECT * FROM foo");
+    }
+
+    #[test]
+    fn test_split_multi_statement() {
+        let sql = "LOAD h3; SELECT * FROM foo";
+        let (setup, query) = split_sql_statements(sql);
+        assert_eq!(setup, vec!["LOAD h3"]);
+        assert_eq!(query, "SELECT * FROM foo");
+    }
+
+    #[test]
+    fn test_split_multi_statement_with_trailing_semicolon() {
+        let sql = "LOAD spatial; LOAD h3; SELECT h3_cell FROM t;";
+        let (setup, query) = split_sql_statements(sql);
+        assert_eq!(setup, vec!["LOAD spatial", "LOAD h3"]);
+        assert_eq!(query, "SELECT h3_cell FROM t");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Shared WKB → Geometry conversion (used by both geoparquet and duckdb)
 // ---------------------------------------------------------------------------
 
@@ -357,6 +428,10 @@ mod duckdb_impl {
 
         conn.execute_batch("INSTALL spatial; LOAD spatial;")
             .map_err(|e| format!("Cannot load spatial extension: {}", e))?;
+
+        // Split multi-statement SQL: run setup, keep final SELECT
+        let (setup_stmts, sql) = split_sql_statements(sql);
+        run_setup_statements(&conn, &setup_stmts)?;
 
         // Discover column names and geometry column via DESCRIBE
         let discover_sql = format!("DESCRIBE ({})", sql);

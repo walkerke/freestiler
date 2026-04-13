@@ -558,6 +558,8 @@ freestile_file <- function(
 #'
 #' @param query Character. A SQL query that returns a geometry column. DuckDB
 #'   spatial functions like `ST_Read()` and `read_parquet()` are available.
+#'   Multi-statement SQL is supported: setup statements (e.g., `LOAD h3;`)
+#'   are executed first, then the final SELECT is used for tiling.
 #' @param output Character. Path for the output .pmtiles file.
 #' @param db_path Character. Path to a DuckDB database file, or NULL (default)
 #'   for an in-memory database.
@@ -798,6 +800,17 @@ freestile_query <- function(
   on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
 
   DBI::dbExecute(con, "INSTALL spatial; LOAD spatial;")
+
+  # Split multi-statement SQL: run setup, keep final SELECT
+  stmts <- strsplit(sql, ";")[[1L]]
+  stmts <- trimws(stmts)
+  stmts <- stmts[nzchar(stmts)]
+  if (length(stmts) > 1L) {
+    for (s in stmts[-length(stmts)]) {
+      DBI::dbExecute(con, s)
+    }
+    sql <- stmts[length(stmts)]
+  }
 
   if (is.null(source_crs) || !nzchar(source_crs)) {
     stop(
