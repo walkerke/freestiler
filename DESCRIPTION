@@ -11,7 +11,7 @@ Description: Create vector tile archives in PMTiles format from sf spatial
     tiling with zero external system dependencies.
 License: MIT + file LICENSE
 URL: https://walker-data.com/freestiler/,
-    https://github.com/walkerke/freestiler
+    https://github.com/walkerke/freestiler/
 BugReports: https://github.com/walkerke/freestiler/issues
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
@@ -23,12 +23,8 @@ Suggests:
     duckdb,
     httpuv,
     jsonlite,
-    knitr,
     mapgl,
-    quarto,
-    rmarkdown,
     testthat (>= 3.0.0)
-VignetteBuilder: quarto
 Config/testthat/edition: 3
 Config/rextendr/version: 0.4.2.9000
 SystemRequirements: Cargo (Rust's package manager), rustc >= 1.70

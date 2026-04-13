@@ -11,7 +11,7 @@ Useful links:
 
 - <https://walker-data.com/freestiler/>
 
-- <https://github.com/walkerke/freestiler>
+- <https://github.com/walkerke/freestiler/>
 
 - Report bugs at <https://github.com/walkerke/freestiler/issues>
 

@@ -14,7 +14,7 @@ Create vector tile archives in PMTiles format from sf spatial data frames. Suppo
 Useful links:
 \itemize{
   \item \url{https://walker-data.com/freestiler/}
-  \item \url{https://github.com/walkerke/freestiler}
+  \item \url{https://github.com/walkerke/freestiler/}
   \item Report bugs at \url{https://github.com/walkerke/freestiler/issues}
 }
 
