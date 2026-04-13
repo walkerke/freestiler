@@ -79,6 +79,42 @@ test_that("freestile_file works with MVT format", {
   expect_true(file.info(output)$size > 0)
 })
 
+test_that("freestile_file auto-reprojects non-WGS84 GeoParquet via sf fallback", {
+  skip_on_cran()
+  skip_if_not_installed("sf")
+  skip_if_not_installed("arrow")
+  skip_if_not(.has_geoparquet(), message = "GeoParquet feature not compiled")
+
+  nc <- sf::st_read(
+    system.file("shape/nc.shp", package = "sf"),
+    quiet = TRUE
+  )
+
+  # Write GeoParquet in a projected CRS (UTM 17N)
+  nc_utm <- sf::st_transform(nc, 32617)
+
+  parquet_path <- tempfile(fileext = ".parquet")
+  on.exit(unlink(parquet_path), add = TRUE)
+  .write_test_geoparquet(nc_utm, parquet_path)
+
+  output <- tempfile(fileext = ".pmtiles")
+  on.exit(unlink(output), add = TRUE)
+
+  # Should fall back to sf reprojection instead of erroring
+  result <- freestile_file(
+    parquet_path,
+    output,
+    layer_name = "counties",
+    tile_format = "mvt",
+    min_zoom = 0,
+    max_zoom = 6,
+    quiet = TRUE
+  )
+
+  expect_true(file.exists(output))
+  expect_true(file.info(output)$size > 0)
+})
+
 test_that("freestile_file errors on missing file", {
   skip_on_cran()
   skip_if_not(.has_geoparquet(), message = "GeoParquet feature not compiled")

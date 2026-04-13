@@ -16,7 +16,7 @@ freestile_file(
   input,
   output,
   layer_name = NULL,
-  tile_format = "mlt",
+  tile_format = "mvt",
   min_zoom = 0L,
   max_zoom = 14L,
   base_zoom = NULL,
@@ -48,7 +48,7 @@ freestile_file(
 
 - tile_format:
 
-  Character. `"mlt"` (default) or `"mvt"`.
+  Character. `"mvt"` (default) or `"mlt"`.
 
 - min_zoom:
 

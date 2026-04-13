@@ -1,10 +1,12 @@
 # MapLibre Tiles (MLT)
 
-freestiler defaults to the [MapLibre Tiles
+freestiler supports the [MapLibre Tiles
 (MLT)](https://github.com/maplibre/maplibre-tile-spec) format, a
 columnar binary tile encoding announced in January 2026 by the MapLibre
-organization. This article explains what MLT is, how it compares to MVT,
-and when you might want to use one vs the other.
+organization. While the default format is MVT for broad compatibility,
+MLT can produce smaller files for polygon and line data. This article
+explains what MLT is, how it compares to MVT, and when you might want to
+use one vs the other.
 
 ### Vector tiles in brief
 
@@ -49,28 +51,25 @@ dominates and compresses similarly in both formats.
 
 ### Which format should I use?
 
-Use **MLT** (the default) when you’re working in R with
+Use **MLT** when you’re working in R with
 [mapgl](https://walker-data.com/mapgl/) or viewing in a browser with
-MapLibre GL JS 5.17+. MLT produces smaller files for polygon and line
-data, and mapgl supports it natively.
+MapLibre GL JS 5.21+, and you want smaller file sizes for polygon and
+line data.
 
-Use **MVT** when you need the widest viewer compatibility - particularly
-for Python-facing examples, older MapLibre versions, or when sharing
-tilesets with users on tools you don’t control. You can switch formats
-with a single argument:
+Use **MVT** (the default) for the widest viewer compatibility - it works
+with MapLibre GL JS, Mapbox GL JS (which now supports PMTiles natively
+as of v3.21), deck.gl, and more. You can switch formats with a single
+argument:
 
 ``` r
-freestile(nc, "nc_mvt.pmtiles", layer_name = "counties", tile_format = "mvt")
+freestile(nc, "nc_mlt.pmtiles", layer_name = "counties", tile_format = "mlt")
 ```
 
 ### Ecosystem status
 
-MLT is still new (January 2026), and library support is growing:
+MLT was announced in January 2026, and library support is growing:
 
 - **Encoding**: freestiler (Rust, R + Python), mlt-core reference
   encoder (Java/C++)
-- **Decoding**: MapLibre GL JS (experimental), mlt-core decoder
-- **Viewing**: MapLibre GL JS with MLT plugin, mapgl in R
-
-As MLT support expands across mapping libraries, the default will become
-directly viewable in more places without needing to switch to MVT.
+- **Decoding**: MapLibre GL JS (experimental, v5.21+), mlt-core decoder
+- **Viewing**: MapLibre GL JS, mapgl in R

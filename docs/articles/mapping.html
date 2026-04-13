@@ -28,7 +28,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">freestiler</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.1</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -233,12 +233,12 @@ View with: view_tiles("us_income.pmtiles")</code></pre>
 </div>
 </section><section class="level3"><h3 id="tile-format-considerations">Tile format considerations<a class="anchor" aria-label="anchor" href="#tile-format-considerations"></a>
 </h3>
-<p>freestiler defaults to <a href="maplibre-tiles.html">MapLibre Tiles (MLT)</a>, which produces smaller files. <code><a href="../reference/view_tiles.html">view_tiles()</a></code> and mapgl handle MLT natively with recent versions of MapLibre GL JS. If you’re sharing tiles with other tools or viewers, use <code>tile_format = "mvt"</code> for the widest compatibility:</p>
+<p>freestiler defaults to <a href="https://github.com/mapbox/vector-tile-spec" class="external-link">Mapbox Vector Tiles (MVT)</a>, which has the broadest viewer compatibility across both MapLibre GL JS and Mapbox GL JS. For potentially smaller files with polygon-heavy data, you can use the experimental <a href="maplibre-tiles.html">MapLibre Tiles (MLT)</a> format:</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb9"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="fu"><a href="../reference/freestile.html">freestile</a></span><span class="op">(</span><span class="va">bgs</span>, <span class="st">"us_income_mvt.pmtiles"</span>,</span>
+<code class="sourceCode R"><span><span class="fu"><a href="../reference/freestile.html">freestile</a></span><span class="op">(</span><span class="va">bgs</span>, <span class="st">"us_income_mlt.pmtiles"</span>,</span>
 <span>  layer_name <span class="op">=</span> <span class="st">"income"</span>,</span>
-<span>  tile_format <span class="op">=</span> <span class="st">"mvt"</span></span>
+<span>  tile_format <span class="op">=</span> <span class="st">"mlt"</span></span>
 <span><span class="op">)</span></span></code></pre></div>
 </div>
 </section><section class="level3"><h3 id="serving-larger-tilesets">Serving larger tilesets<a class="anchor" aria-label="anchor" href="#serving-larger-tilesets"></a>

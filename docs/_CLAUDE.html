@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="index.html">freestiler</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.1</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -40,14 +40,14 @@
 
 <div id="freestiler" class="section level1">
 
-<p>A Rust-powered, MLT-first vector tile engine for R. Creates PMTiles archives from sf objects with zero external dependencies (no tippecanoe, no Java, no Go).</p>
+<p>A Rust-powered vector tile engine for R. Creates PMTiles archives from sf objects with zero external dependencies (no tippecanoe, no Java, no Go).</p>
 <div class="section level2">
 <h2 id="what-this-package-does">What this package does<a class="anchor" aria-label="anchor" href="#what-this-package-does"></a></h2>
 <p><code>freestiler</code> takes an sf data frame and produces a <code>.pmtiles</code> file containing vector tiles. It supports two tile formats:</p>
 <ul><li>
-<strong>MLT (MapLibre Tiles)</strong> — the default. A next-gen columnar binary format announced Jan 2026. This is one of the first MLT encoders outside the reference Java/C++ implementations.</li>
+<strong>MVT (Mapbox Vector Tiles)</strong> — the default. Protobuf-based, supported by MapLibre GL JS, Mapbox GL JS (native PMTiles support as of v3.21), deck.gl, and more.</li>
 <li>
-<strong>MVT (Mapbox Vector Tiles)</strong> — protobuf-based, supported everywhere. Used as a compatibility fallback.</li>
+<strong>MLT (MapLibre Tiles)</strong> — an experimental columnar binary format announced Jan 2026. Can produce smaller files for polygon and line data. Available via <code>tile_format = "mlt"</code>.</li>
 </ul><p>The entire pipeline runs in-memory: sf → Rust (via extendr) → tile encoding → PMTiles archive. No temp files, no shelling out.</p>
 </div>
 <div class="section level2">
@@ -137,7 +137,7 @@ Rust:
 <span>  <span class="va">input</span>,                    <span class="co"># sf object</span></span>
 <span>  <span class="va">output</span>,                   <span class="co"># Output .pmtiles path</span></span>
 <span>  layer_name <span class="op">=</span> <span class="cn">NULL</span>,        <span class="co"># Layer name (derived from filename if NULL)</span></span>
-<span>  tile_format <span class="op">=</span> <span class="st">"mlt"</span>,      <span class="co"># "mlt" (default) or "mvt"</span></span>
+<span>  tile_format <span class="op">=</span> <span class="st">"mvt"</span>,      <span class="co"># "mvt" (default) or "mlt"</span></span>
 <span>  min_zoom <span class="op">=</span> <span class="fl">0</span>,</span>
 <span>  max_zoom <span class="op">=</span> <span class="fl">14</span>,</span>
 <span>  simplification <span class="op">=</span> <span class="cn">TRUE</span>,    <span class="co"># Grid-snap to tile pixels (prevents slivers)</span></span>

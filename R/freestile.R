@@ -44,6 +44,9 @@ freestile_layer <- function(input, min_zoom = NULL, max_zoom = NULL) {
 #' formats, multi-layer output, feature dropping, point clustering, and feature
 #' coalescing.
 #'
+#' Input data in any coordinate reference system (CRS) is automatically
+#' reprojected to WGS84 (EPSG:4326) before tiling.
+#'
 #' @param input An sf data frame, or a named list of sf/freestile_layer objects
 #'   for multi-layer output.
 #' @param output Character. Path for the output .pmtiles file.
@@ -341,12 +344,13 @@ freestile <- function(
 #' Create vector tiles from a spatial file
 #'
 #' Reads a GeoParquet, GeoPackage, Shapefile, or other spatial file directly
-#' into the tiling engine. The GeoParquet engine requires compilation with
-#' `FREESTILER_GEOPARQUET=true`. The DuckDB engine uses the Rust DuckDB backend
-#' when included in the build (enabled by default for native builds), or falls
-#' back to the R `duckdb` package (which reads the file via DuckDB's
-#' `ST_Read()`, auto-detects the source CRS via `ST_Read_Meta()`, and
-#' reprojects to WGS84). Control backend selection with
+#' into the tiling engine. Input data in any coordinate reference system is
+#' automatically reprojected to WGS84 (EPSG:4326) before tiling.
+#'
+#' The GeoParquet engine requires compilation with `FREESTILER_GEOPARQUET=true`.
+#' The DuckDB engine uses the Rust DuckDB backend when included in the build
+#' (enabled by default for native builds), or falls back to the R `duckdb`
+#' package. Control backend selection with
 #' `options(freestiler.duckdb_backend = "auto"|"rust"|"r")`.
 #'
 #' @param input Character. Path to the input spatial file.
@@ -506,6 +510,22 @@ freestile_file <- function(
     do_coalesce = coalesce,
     quiet = quiet
   )
+
+  # If the Rust engine rejects the CRS, fall back to sf reprojection
+  if (startsWith(result, "Error:") && grepl("CRS|reproject", result, ignore.case = TRUE)) {
+    if (!quiet) message("Non-WGS84 CRS detected; reprojecting via sf...")
+    sf_data <- sf::st_read(input, quiet = TRUE)
+    return(freestile(
+      sf_data, output,
+      layer_name = layer_name, tile_format = tile_format,
+      min_zoom = min_zoom, max_zoom = max_zoom,
+      base_zoom = base_zoom, drop_rate = drop_rate,
+      cluster_distance = cluster_distance,
+      cluster_maxzoom = cluster_maxzoom,
+      coalesce = coalesce, simplification = simplification,
+      overwrite = FALSE, quiet = quiet
+    ))
+  }
 
   if (startsWith(result, "Error:")) {
     stop(result, call. = FALSE)

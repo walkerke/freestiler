@@ -183,10 +183,13 @@ freestile(
 
 ## Tile formats
 
-freestiler defaults to [MapLibre Tiles
-(MLT)](https://github.com/maplibre/maplibre-tile-spec), a columnar
-encoding that produces smaller files for polygon and line data. Use
-`tile_format = "mvt"` when you need the widest viewer compatibility.
+freestiler defaults to [Mapbox Vector Tiles
+(MVT)](https://github.com/mapbox/vector-tile-spec), the widely-supported
+protobuf format that works with both MapLibre GL JS and Mapbox GL JS.
+The experimental [MapLibre Tiles
+(MLT)](https://github.com/maplibre/maplibre-tile-spec) format is also
+available via `tile_format = "mlt"` and can produce smaller files for
+polygon and line data.
 
 ## Learn more
 

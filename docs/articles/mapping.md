@@ -196,18 +196,18 @@ maplibre() |>
 
 ### Tile format considerations
 
-freestiler defaults to [MapLibre Tiles
-(MLT)](https://walker-data.com/freestiler/articles/maplibre-tiles.md),
-which produces smaller files.
-[`view_tiles()`](https://walker-data.com/freestiler/reference/view_tiles.md)
-and mapgl handle MLT natively with recent versions of MapLibre GL JS. If
-you’re sharing tiles with other tools or viewers, use
-`tile_format = "mvt"` for the widest compatibility:
+freestiler defaults to [Mapbox Vector Tiles
+(MVT)](https://github.com/mapbox/vector-tile-spec), which has the
+broadest viewer compatibility across both MapLibre GL JS and Mapbox GL
+JS. For potentially smaller files with polygon-heavy data, you can use
+the experimental [MapLibre Tiles
+(MLT)](https://walker-data.com/freestiler/articles/maplibre-tiles.md)
+format:
 
 ``` r
-freestile(bgs, "us_income_mvt.pmtiles",
+freestile(bgs, "us_income_mlt.pmtiles",
   layer_name = "income",
-  tile_format = "mvt"
+  tile_format = "mlt"
 )
 ```
 

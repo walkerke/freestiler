@@ -1,19 +1,14 @@
 # freestiler
 
-A Rust-powered, MLT-first vector tile engine for R. Creates PMTiles
-archives from sf objects with zero external dependencies (no tippecanoe,
-no Java, no Go).
+A Rust-powered vector tile engine for R. Creates PMTiles archives from sf objects with zero external dependencies (no tippecanoe, no Java, no Go).
 
 ## What this package does
 
 `freestiler` takes an sf data frame and produces a `.pmtiles` file
 containing vector tiles. It supports two tile formats:
 
-- **MLT (MapLibre Tiles)** — the default. A next-gen columnar binary
-  format announced Jan 2026. This is one of the first MLT encoders
-  outside the reference Java/C++ implementations.
-- **MVT (Mapbox Vector Tiles)** — protobuf-based, supported everywhere.
-  Used as a compatibility fallback.
+- **MVT (Mapbox Vector Tiles)** — the default. Protobuf-based, supported by MapLibre GL JS, Mapbox GL JS (native PMTiles support as of v3.21), deck.gl, and more.
+- **MLT (MapLibre Tiles)** — an experimental columnar binary format announced Jan 2026. Can produce smaller files for polygon and line data. Available via `tile_format = "mlt"`.
 
 The entire pipeline runs in-memory: sf → Rust (via extendr) → tile
 encoding → PMTiles archive. No temp files, no shelling out.
@@ -102,7 +97,7 @@ freestile(
   input,                    # sf object
   output,                   # Output .pmtiles path
   layer_name = NULL,        # Layer name (derived from filename if NULL)
-  tile_format = "mlt",      # "mlt" (default) or "mvt"
+  tile_format = "mvt",      # "mvt" (default) or "mlt"
   min_zoom = 0,
   max_zoom = 14,
   simplification = TRUE,    # Grid-snap to tile pixels (prevents slivers)

@@ -28,7 +28,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">freestiler</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.1</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -76,7 +76,7 @@
 
 
 
-    <p>freestiler defaults to the <a href="https://github.com/maplibre/maplibre-tile-spec" class="external-link">MapLibre Tiles (MLT)</a> format, a columnar binary tile encoding announced in January 2026 by the MapLibre organization. This article explains what MLT is, how it compares to MVT, and when you might want to use one vs the other.</p>
+    <p>freestiler supports the <a href="https://github.com/maplibre/maplibre-tile-spec" class="external-link">MapLibre Tiles (MLT)</a> format, a columnar binary tile encoding announced in January 2026 by the MapLibre organization. While the default format is MVT for broad compatibility, MLT can produce smaller files for polygon and line data. This article explains what MLT is, how it compares to MVT, and when you might want to use one vs the other.</p>
 <section class="level3"><h3 id="vector-tiles-in-brief">Vector tiles in brief<a class="anchor" aria-label="anchor" href="#vector-tiles-in-brief"></a>
 </h3>
 <p>Vector tiles divide geographic data into a grid of square tiles at multiple zoom levels. Unlike raster tiles (pre-rendered images), vector tiles store the actual geometry and attribute data, so the client can style, interact with, and dynamically render the data. The standard container for vector tilesets is <a href="https://github.com/protomaps/PMTiles" class="external-link">PMTiles</a> - a single-file archive you can serve from any static file host.</p>
@@ -118,25 +118,23 @@
 <p>Point-only datasets see minimal savings because coordinate data dominates and compresses similarly in both formats.</p>
 </section><section class="level3"><h3 id="which-format-should-i-use">Which format should I use?<a class="anchor" aria-label="anchor" href="#which-format-should-i-use"></a>
 </h3>
-<p>Use <strong>MLT</strong> (the default) when you’re working in R with <a href="https://walker-data.com/mapgl/" class="external-link">mapgl</a> or viewing in a browser with MapLibre GL JS 5.17+. MLT produces smaller files for polygon and line data, and mapgl supports it natively.</p>
-<p>Use <strong>MVT</strong> when you need the widest viewer compatibility - particularly for Python-facing examples, older MapLibre versions, or when sharing tilesets with users on tools you don’t control. You can switch formats with a single argument:</p>
+<p>Use <strong>MLT</strong> when you’re working in R with <a href="https://walker-data.com/mapgl/" class="external-link">mapgl</a> or viewing in a browser with MapLibre GL JS 5.21+, and you want smaller file sizes for polygon and line data.</p>
+<p>Use <strong>MVT</strong> (the default) for the widest viewer compatibility - it works with MapLibre GL JS, Mapbox GL JS (which now supports PMTiles natively as of v3.21), deck.gl, and more. You can switch formats with a single argument:</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb1"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="fu"><a href="../reference/freestile.html">freestile</a></span><span class="op">(</span><span class="va">nc</span>, <span class="st">"nc_mvt.pmtiles"</span>, layer_name <span class="op">=</span> <span class="st">"counties"</span>, tile_format <span class="op">=</span> <span class="st">"mvt"</span><span class="op">)</span></span></code></pre></div>
+<code class="sourceCode R"><span><span class="fu"><a href="../reference/freestile.html">freestile</a></span><span class="op">(</span><span class="va">nc</span>, <span class="st">"nc_mlt.pmtiles"</span>, layer_name <span class="op">=</span> <span class="st">"counties"</span>, tile_format <span class="op">=</span> <span class="st">"mlt"</span><span class="op">)</span></span></code></pre></div>
 </div>
 </section><section class="level3"><h3 id="ecosystem-status">Ecosystem status<a class="anchor" aria-label="anchor" href="#ecosystem-status"></a>
 </h3>
-<p>MLT is still new (January 2026), and library support is growing:</p>
+<p>MLT was announced in January 2026, and library support is growing:</p>
 <ul>
 <li>
 <strong>Encoding</strong>: freestiler (Rust, R + Python), mlt-core reference encoder (Java/C++)</li>
 <li>
-<strong>Decoding</strong>: MapLibre GL JS (experimental), mlt-core decoder</li>
+<strong>Decoding</strong>: MapLibre GL JS (experimental, v5.21+), mlt-core decoder</li>
 <li>
-<strong>Viewing</strong>: MapLibre GL JS with MLT plugin, mapgl in R</li>
-</ul>
-<p>As MLT support expands across mapping libraries, the default will become directly viewable in more places without needing to switch to MVT.</p>
-</section><script id="quarto-html-after-body" type="application/javascript">
+<strong>Viewing</strong>: MapLibre GL JS, mapgl in R</li>
+</ul></section><script id="quarto-html-after-body" type="application/javascript">
   window.document.addEventListener("DOMContentLoaded", function (event) {
       var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
       var mailtoRegex = new RegExp(/^mailto:/);

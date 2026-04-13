@@ -7,12 +7,18 @@ it writes a single `.pmtiles` file you can serve from anywhere. The
 engine is written in Rust and runs in-process, so there’s nothing else
 to install.
 
-The package supports two tile formats: [MapLibre Tiles
-(MLT)](https://github.com/maplibre/maplibre-tile-spec), a
-next-generation columnar format that’s the default, and Mapbox Vector
-Tiles (MVT), the widely-supported protobuf format. See the [MapLibre
+The default tile format is [Mapbox Vector Tiles
+(MVT)](https://github.com/mapbox/vector-tile-spec), the widely-supported
+protobuf format that works with both MapLibre GL JS and Mapbox GL JS
+(which now supports PMTiles natively). The package also supports
+[MapLibre Tiles (MLT)](https://github.com/maplibre/maplibre-tile-spec),
+a next-generation columnar format. See the [MapLibre
 Tiles](https://walker-data.com/freestiler/articles/maplibre-tiles.md)
 article for more on the differences.
+
+Input data in any coordinate reference system is automatically
+reprojected to WGS84 (EPSG:4326) before tiling, so you don’t need to
+worry about CRS transformations.
 
 ### Installation
 
@@ -49,7 +55,7 @@ nc <- st_read(system.file("shape/nc.shp", package = "sf"))
 freestile(nc, "nc_counties.pmtiles", layer_name = "counties")
 ```
 
-    Creating MLT tiles (zoom 0-14) for 100 features across 1 layer...
+    Creating MVT tiles (zoom 0-14) for 100 features across 1 layer...
       Tiling layer 'counties' (zoom 0-14)...
     Created nc_counties.pmtiles (65.2 KB)
 
@@ -107,14 +113,14 @@ external server:
 npx http-server /path/to/tiles -p 8082 --cors -c-1
 ```
 
-### MLT vs MVT
+### MVT vs MLT
 
-The default tile format is MLT, which tends to produce smaller files for
-polygon-heavy data. If you need maximum viewer compatibility -
-particularly for Python viewers or older MapLibre versions - use MVT:
+The default tile format is MVT, which has broad viewer compatibility
+including both MapLibre GL JS and Mapbox GL JS. For potentially smaller
+files with polygon-heavy data, you can use the experimental MLT format:
 
 ``` r
-freestile(nc, "nc_mvt.pmtiles", layer_name = "counties", tile_format = "mvt")
+freestile(nc, "nc_mlt.pmtiles", layer_name = "counties", tile_format = "mlt")
 ```
 
 ### Controlling zoom levels
@@ -148,7 +154,7 @@ freestile(nc, "nc_dropping.pmtiles",
 
 You can tile spatial files on disk without loading them into R first.
 This is useful for large GeoParquet files or other formats you’d rather
-not pull into memory:
+not pull into memory. Non-WGS84 files are automatically reprojected:
 
 ``` r
 # GeoParquet

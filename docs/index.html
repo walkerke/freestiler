@@ -28,7 +28,7 @@
 
     <a class="navbar-brand me-2" href="index.html">freestiler</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.1</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -207,7 +207,7 @@
 <div class="section level2">
 <h2 id="tile-formats">Tile formats<a class="anchor" aria-label="anchor" href="#tile-formats"></a>
 </h2>
-<p>freestiler defaults to <a href="https://github.com/maplibre/maplibre-tile-spec" class="external-link">MapLibre Tiles (MLT)</a>, a columnar encoding that produces smaller files for polygon and line data. Use <code>tile_format = "mvt"</code> when you need the widest viewer compatibility.</p>
+<p>freestiler defaults to <a href="https://github.com/mapbox/vector-tile-spec" class="external-link">Mapbox Vector Tiles (MVT)</a>, the widely-supported protobuf format that works with both MapLibre GL JS and Mapbox GL JS. The experimental <a href="https://github.com/maplibre/maplibre-tile-spec" class="external-link">MapLibre Tiles (MLT)</a> format is also available via <code>tile_format = "mlt"</code> and can produce smaller files for polygon and line data.</p>
 </div>
 <div class="section level2">
 <h2 id="learn-more">Learn more<a class="anchor" aria-label="anchor" href="#learn-more"></a>

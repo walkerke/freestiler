@@ -12,7 +12,7 @@ freestile(
   input,
   output,
   layer_name = NULL,
-  tile_format = "mlt",
+  tile_format = "mvt",
   min_zoom = 0L,
   max_zoom = 14L,
   base_zoom = NULL,
@@ -45,8 +45,8 @@ freestile(
 
 - tile_format:
 
-  Character. Tile encoding format: `"mlt"` (default) for MapLibre Tiles
-  or `"mvt"` for Mapbox Vector Tiles.
+  Character. Tile encoding format: `"mvt"` (default) for Mapbox Vector
+  Tiles or `"mlt"` for MapLibre Tiles.
 
 - min_zoom:
 
