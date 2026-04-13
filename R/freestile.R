@@ -49,8 +49,8 @@ freestile_layer <- function(input, min_zoom = NULL, max_zoom = NULL) {
 #' @param output Character. Path for the output .pmtiles file.
 #' @param layer_name Character. Name for the tile layer. If NULL, derived from
 #'   the output filename. Only used for single-layer input.
-#' @param tile_format Character. Tile encoding format: `"mlt"` (default) for
-#'   MapLibre Tiles or `"mvt"` for Mapbox Vector Tiles.
+#' @param tile_format Character. Tile encoding format: `"mvt"` (default) for
+#'   Mapbox Vector Tiles or `"mlt"` for MapLibre Tiles.
 #' @param min_zoom Integer. Minimum zoom level (default 0).
 #' @param max_zoom Integer. Maximum zoom level (default 14).
 #' @param base_zoom Integer. Zoom level at and above which all features are
@@ -109,7 +109,7 @@ freestile <- function(
     input,
     output,
     layer_name = NULL,
-    tile_format = "mlt",
+    tile_format = "mvt",
     min_zoom = 0L,
     max_zoom = 14L,
     base_zoom = NULL,
@@ -122,7 +122,7 @@ freestile <- function(
     overwrite = TRUE,
     quiet = FALSE
 ) {
-  tile_format <- match.arg(tile_format, c("mlt", "mvt"))
+  tile_format <- match.arg(tile_format, c("mvt", "mlt"))
 
   output <- normalizePath(output, mustWork = FALSE)
 
@@ -353,7 +353,7 @@ freestile <- function(
 #' @param output Character. Path for the output .pmtiles file.
 #' @param layer_name Character. Name for the tile layer. If NULL, derived from
 #'   the output filename.
-#' @param tile_format Character. `"mlt"` (default) or `"mvt"`.
+#' @param tile_format Character. `"mvt"` (default) or `"mlt"`.
 #' @param min_zoom Integer. Minimum zoom level (default 0).
 #' @param max_zoom Integer. Maximum zoom level (default 14).
 #' @param base_zoom Integer. Zoom level at and above which all features are
@@ -383,7 +383,7 @@ freestile_file <- function(
     input,
     output,
     layer_name = NULL,
-    tile_format = "mlt",
+    tile_format = "mvt",
     min_zoom = 0L,
     max_zoom = 14L,
     base_zoom = NULL,
@@ -396,7 +396,7 @@ freestile_file <- function(
     quiet = FALSE,
     engine = "geoparquet"
 ) {
-  tile_format <- match.arg(tile_format, c("mlt", "mvt"))
+  tile_format <- match.arg(tile_format, c("mvt", "mlt"))
   engine <- match.arg(engine, c("geoparquet", "duckdb"))
 
   input <- normalizePath(input, mustWork = TRUE)
@@ -546,7 +546,7 @@ freestile_file <- function(
 #'   `duckdb` fallback; ignored by the Rust DuckDB backend.
 #' @param layer_name Character. Name for the tile layer. If NULL, derived from
 #'   the output filename.
-#' @param tile_format Character. `"mlt"` (default) or `"mvt"`.
+#' @param tile_format Character. `"mvt"` (default) or `"mlt"`.
 #' @param min_zoom Integer. Minimum zoom level (default 0).
 #' @param max_zoom Integer. Maximum zoom level (default 14).
 #' @param base_zoom Integer. Zoom level at and above which all features are
@@ -594,7 +594,7 @@ freestile_query <- function(
     output,
     db_path = NULL,
     layer_name = NULL,
-    tile_format = "mlt",
+    tile_format = "mvt",
     min_zoom = 0L,
     max_zoom = 14L,
     base_zoom = NULL,
@@ -608,7 +608,7 @@ freestile_query <- function(
     source_crs = NULL,
     streaming = "auto"
 ) {
-  tile_format <- match.arg(tile_format, c("mlt", "mvt"))
+  tile_format <- match.arg(tile_format, c("mvt", "mlt"))
   streaming <- match.arg(streaming, c("auto", "always", "never"))
 
   output <- normalizePath(output, mustWork = FALSE)
