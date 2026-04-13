@@ -25,6 +25,8 @@ root_lock  <- "src/rust/Cargo.lock"
 lock_bak   <- "src/rust/Cargo.lock.bak"
 
 restore <- function() {
+  unlink("src/vendor", recursive = TRUE)
+  unlink("src/.cargo", recursive = TRUE)
   if (file.exists(vendor_bak)) {
     file.rename(vendor_bak, vendor_xz)
     message("Restored full vendor tarball.")
@@ -92,8 +94,6 @@ writeLines(root_lines, root_toml)
 # --- Step 3: Re-vendor with stripped deps ---
 message("=== Re-vendoring (no optional deps) ===")
 
-# Remove stale lockfile so it regenerates from stripped Cargo.toml
-file.remove(root_lock)
 unlink("src/vendor", recursive = TRUE)
 
 rextendr::vendor_pkgs()
@@ -112,9 +112,11 @@ pkg_size <- file.info(pkg_tar)$size / 1e6
 message(sprintf("\n=== Done! CRAN tarball: %s (%.1f MB) ===", pkg_tar, pkg_size))
 message("Submit at: https://cran.r-project.org/submit.html")
 
-# --- Step 5: Restore Cargo files ---
-# (on.exit restores vendor tarball; restore Cargo files here)
+# --- Step 5: Restore everything ---
+unlink("src/vendor", recursive = TRUE)
+unlink("src/.cargo", recursive = TRUE)
 file.rename(core_bak, core_toml)
 file.rename(root_bak, root_toml)
 file.rename(lock_bak, root_lock)
-message("Restored Cargo files.")
+file.rename(vendor_bak, vendor_xz)
+message("Restored all Cargo files and full vendor tarball.")
