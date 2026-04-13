@@ -1,6 +1,6 @@
 Package: freestiler
 Title: Create Vector Tiles from Spatial Data
-Version: 0.1.1
+Version: 0.1.6
 Date: 2026-04-13
 Authors@R: c(
     person("Kyle", "Walker", , "kyle@walker-data.com", role = c("aut", "cre"))

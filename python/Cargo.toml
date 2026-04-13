@@ -1,6 +1,6 @@
 [package]
 name = "freestiler-python"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 description = "PyO3 bindings for the freestiler Rust vector tile engine"
 license = "MIT"

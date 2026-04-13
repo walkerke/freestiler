@@ -111,6 +111,11 @@ freestile(
 
 The output file path (invisibly).
 
+## Details
+
+Input data in any coordinate reference system (CRS) is automatically
+reprojected to WGS84 (EPSG:4326) before tiling.
+
 ## Examples
 
 ``` r

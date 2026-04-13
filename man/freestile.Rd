@@ -82,6 +82,10 @@ frames. Supports both Mapbox Vector Tile (MVT) and MapLibre Tile (MLT)
 formats, multi-layer output, feature dropping, point clustering, and feature
 coalescing.
 }
+\details{
+Input data in any coordinate reference system (CRS) is automatically
+reprojected to WGS84 (EPSG:4326) before tiling.
+}
 \examples{
 \dontrun{
 library(sf)

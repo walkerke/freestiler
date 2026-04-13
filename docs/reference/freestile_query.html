@@ -15,7 +15,7 @@ options(freestiler.duckdb_backend = &quot;auto&quot;|&quot;rust&quot;|&quot;r&qu
 
     <a class="navbar-brand me-2" href="../index.html">freestiler</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.1</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.1.6</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -84,7 +84,9 @@ build (enabled by default for native builds), or falls back to the R
 
 <dl><dt id="arg-query">query<a class="anchor" aria-label="anchor" href="#arg-query"></a></dt>
 <dd><p>Character. A SQL query that returns a geometry column. DuckDB
-spatial functions like <code>ST_Read()</code> and <code>read_parquet()</code> are available.</p></dd>
+spatial functions like <code>ST_Read()</code> and <code>read_parquet()</code> are available.
+Multi-statement SQL is supported: setup statements (e.g., <code>LOAD h3;</code>)
+are executed first, then the final SELECT is used for tiling.</p></dd>
 
 
 <dt id="arg-output">output<a class="anchor" aria-label="anchor" href="#arg-output"></a></dt>

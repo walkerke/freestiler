@@ -26,7 +26,9 @@ freestile_query(
 }
 \arguments{
 \item{query}{Character. A SQL query that returns a geometry column. DuckDB
-spatial functions like \code{ST_Read()} and \code{read_parquet()} are available.}
+spatial functions like \code{ST_Read()} and \code{read_parquet()} are available.
+Multi-statement SQL is supported: setup statements (e.g., \verb{LOAD h3;})
+are executed first, then the final SELECT is used for tiling.}
 
 \item{output}{Character. Path for the output .pmtiles file.}
 
