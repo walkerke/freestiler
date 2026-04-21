@@ -14,6 +14,15 @@ vendor_exists <- file.exists("src/rust/vendor.tar.xz")
 is_not_cran <- env_not_cran != ""
 is_debug <- env_debug != ""
 
+# r-universe builds set MY_UNIVERSE to the universe URL; treat as not-CRAN so
+# users of `install.packages("freestiler", repos = "https://*.r-universe.dev")`
+# get the full-feature build (DuckDB, GeoParquet opt-in) rather than the
+# stripped CRAN build.
+if (!is_not_cran && Sys.getenv("MY_UNIVERSE") != "") {
+  is_not_cran <- TRUE
+  message("Detected r-universe build (MY_UNIVERSE set) — enabling NOT_CRAN features.")
+}
+
 if (is_debug) {
   # if we have DEBUG then we set not cran to true
   # CRAN is always release build
@@ -79,9 +88,12 @@ if (Sys.getenv("FREESTILER_FSST") != "") {
   message("Enabling FSST feature.")
 }
 
-# Additional optional features
+# Additional optional features. GeoParquet is default-on for non-CRAN
+# builds to match the Python wheels; opt out with FREESTILER_GEOPARQUET=false.
+# FastPFOR stays opt-in (advanced MLT encoding, niche use cases).
 if (is_not_cran) {
-  if (Sys.getenv("FREESTILER_GEOPARQUET") != "") {
+  geoparquet_env <- tolower(trimws(Sys.getenv("FREESTILER_GEOPARQUET", unset = "true")))
+  if (!geoparquet_env %in% c("0", "false", "no", "off")) {
     features <- c(features, "geoparquet")
     message("Enabling GeoParquet feature.")
   }
