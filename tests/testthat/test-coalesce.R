@@ -1,4 +1,5 @@
 test_that("freestile with coalesce produces output for polygons", {
+  skip_on_cran()
   skip_if_not_installed("sf")
 
   nc <- sf::st_read(
@@ -25,6 +26,7 @@ test_that("freestile with coalesce produces output for polygons", {
 })
 
 test_that("coalesce produces smaller or equal output", {
+  skip_on_cran()
   skip_if_not_installed("sf")
 
   nc <- sf::st_read(
@@ -52,6 +54,7 @@ test_that("coalesce produces smaller or equal output", {
 })
 
 test_that("coalesce works with MLT format", {
+  skip_on_cran()
   skip_if_not_installed("sf")
 
   nc <- sf::st_read(
@@ -78,6 +81,7 @@ test_that("coalesce works with MLT format", {
 })
 
 test_that("all features combined: drop + cluster + coalesce", {
+  skip_on_cran()
   skip_if_not_installed("sf")
 
   nc <- sf::st_read(

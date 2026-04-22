@@ -96,6 +96,10 @@ message("=== Re-vendoring (no optional deps) ===")
 
 unlink("src/vendor", recursive = TRUE)
 
+# Regenerate lockfile to match stripped Cargo.toml (rextendr uses --locked)
+system2("cargo", c("generate-lockfile",
+  "--manifest-path", "src/rust/Cargo.toml"))
+
 rextendr::vendor_pkgs()
 
 new_size <- file.info(vendor_xz)$size / 1e6

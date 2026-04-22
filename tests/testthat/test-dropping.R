@@ -1,4 +1,5 @@
 test_that("freestile with drop_rate produces output", {
+  skip_on_cran()
   skip_if_not_installed("sf")
 
   nc <- sf::st_read(
@@ -25,6 +26,7 @@ test_that("freestile with drop_rate produces output", {
 })
 
 test_that("drop_rate produces smaller output than no dropping", {
+  skip_on_cran()
   skip_if_not_installed("sf")
 
   nc <- sf::st_read(
@@ -52,6 +54,7 @@ test_that("drop_rate produces smaller output than no dropping", {
 })
 
 test_that("base_zoom prevents dropping at and above threshold", {
+  skip_on_cran()
   skip_if_not_installed("sf")
 
   nc <- sf::st_read(
@@ -82,6 +85,7 @@ test_that("base_zoom prevents dropping at and above threshold", {
 })
 
 test_that("drop_rate works with point data", {
+  skip_on_cran()
   skip_if_not_installed("sf")
 
   pts <- sf::st_as_sf(

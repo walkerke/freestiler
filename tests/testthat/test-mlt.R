@@ -1,4 +1,5 @@
 test_that("freestile creates MLT PMTiles from sf polygons", {
+  skip_on_cran()
   skip_if_not_installed("sf")
 
   nc <- sf::st_read(
@@ -25,6 +26,7 @@ test_that("freestile creates MLT PMTiles from sf polygons", {
 })
 
 test_that("MLT produces smaller output than MVT for polygon data", {
+  skip_on_cran()
   skip_if_not_installed("sf")
 
   # nc has a mix of POLYGON and MULTIPOLYGON, so this is a coarse size
@@ -55,6 +57,7 @@ test_that("MLT produces smaller output than MVT for polygon data", {
 })
 
 test_that("MLT handles dictionary-encodable string columns", {
+  skip_on_cran()
   skip_if_not_installed("sf")
 
   # Create data with low-cardinality strings (good for dictionary encoding)
@@ -80,6 +83,7 @@ test_that("MLT handles dictionary-encodable string columns", {
 })
 
 test_that("MLT handles mixed geometry types (no RLE on geom types)", {
+  skip_on_cran()
   skip_if_not_installed("sf")
 
   # Create a layer with mixed polygons and multipolygons
@@ -100,6 +104,7 @@ test_that("MLT handles mixed geometry types (no RLE on geom types)", {
 })
 
 test_that("freestile creates MLT PMTiles from sf points", {
+  skip_on_cran()
   skip_if_not_installed("sf")
 
   pts <- sf::st_as_sf(

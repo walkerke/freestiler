@@ -1,4 +1,5 @@
 test_that("freestile creates MVT PMTiles from sf polygons", {
+  skip_on_cran()
   skip_if_not_installed("sf")
 
   nc <- sf::st_read(

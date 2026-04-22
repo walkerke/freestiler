@@ -1,4 +1,5 @@
 test_that("freestile creates multi-layer MVT PMTiles", {
+  skip_on_cran()
   skip_if_not_installed("sf")
 
   nc <- sf::st_read(
@@ -25,6 +26,7 @@ test_that("freestile creates multi-layer MVT PMTiles", {
 })
 
 test_that("freestile creates multi-layer MLT PMTiles", {
+  skip_on_cran()
   skip_if_not_installed("sf")
 
   nc <- sf::st_read(
@@ -51,6 +53,7 @@ test_that("freestile creates multi-layer MLT PMTiles", {
 })
 
 test_that("freestile_layer sets per-layer zoom range", {
+  skip_on_cran()
   skip_if_not_installed("sf")
 
   nc <- sf::st_read(
@@ -83,6 +86,7 @@ test_that("freestile_layer validates input", {
 })
 
 test_that("multi-layer input requires named list", {
+  skip_on_cran()
   skip_if_not_installed("sf")
 
   nc <- sf::st_read(
@@ -100,6 +104,7 @@ test_that("multi-layer input requires named list", {
 })
 
 test_that("base_zoom with multilayer respects per-layer max_zoom", {
+  skip_on_cran()
   skip_if_not_installed("sf")
 
   nc <- sf::st_read(
@@ -150,6 +155,7 @@ test_that("base_zoom with multilayer respects per-layer max_zoom", {
 })
 
 test_that("single sf input still works (backward compat)", {
+  skip_on_cran()
   skip_if_not_installed("sf")
 
   nc <- sf::st_read(

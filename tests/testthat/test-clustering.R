@@ -1,4 +1,5 @@
 test_that("freestile with clustering produces output", {
+  skip_on_cran()
   skip_if_not_installed("sf")
 
   pts <- sf::st_as_sf(
@@ -32,6 +33,7 @@ test_that("freestile with clustering produces output", {
 })
 
 test_that("clustering with MLT format works", {
+  skip_on_cran()
   skip_if_not_installed("sf")
 
   pts <- sf::st_as_sf(
@@ -63,6 +65,7 @@ test_that("clustering with MLT format works", {
 })
 
 test_that("clustering does not apply to polygon layers", {
+  skip_on_cran()
   skip_if_not_installed("sf")
 
   nc <- sf::st_read(
