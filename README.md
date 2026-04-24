@@ -9,7 +9,13 @@
 
 ### R
 
-Install from [r-universe](https://walkerke.r-universe.dev):
+freestiler is available on CRAN: 
+
+```r
+install.packages("freestiler")
+```
+
+For the full feature set powered by Rust DuckDB (MacOS and Linux only), install from [r-universe](https://walkerke.r-universe.dev):
 
 ```r
 install.packages(

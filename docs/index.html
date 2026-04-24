@@ -76,21 +76,24 @@
 <div class="section level3">
 <h3 id="r">R<a class="anchor" aria-label="anchor" href="#r"></a>
 </h3>
-<p>Install from <a href="https://walkerke.r-universe.dev" class="external-link">r-universe</a>:</p>
+<p>freestiler is available on CRAN:</p>
 <div class="sourceCode" id="cb1"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/utils/install.packages.html" class="external-link">install.packages</a></span><span class="op">(</span><span class="st">"freestiler"</span><span class="op">)</span></span></code></pre></div>
+<p>For the full feature set powered by Rust DuckDB (MacOS and Linux only), install from <a href="https://walkerke.r-universe.dev" class="external-link">r-universe</a>:</p>
+<div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/utils/install.packages.html" class="external-link">install.packages</a></span><span class="op">(</span></span>
 <span>  <span class="st">"freestiler"</span>,</span>
 <span>  repos <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"https://walkerke.r-universe.dev"</span>, <span class="st">"https://cloud.r-project.org"</span><span class="op">)</span></span>
 <span><span class="op">)</span></span></code></pre></div>
 <p>Or install from GitHub:</p>
-<div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb3"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="co"># install.packages("devtools")</span></span>
 <span><span class="fu">devtools</span><span class="fu">::</span><span class="fu"><a href="https://remotes.r-lib.org/reference/install_github.html" class="external-link">install_github</a></span><span class="op">(</span><span class="st">"walkerke/freestiler"</span><span class="op">)</span></span></code></pre></div>
 </div>
 <div class="section level3">
 <h3 id="python">Python<a class="anchor" aria-label="anchor" href="#python"></a>
 </h3>
-<div class="sourceCode" id="cb3"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" tabindex="-1"></a><span class="ex">pip</span> install freestiler</span></code></pre></div>
+<div class="sourceCode" id="cb4"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a><span class="ex">pip</span> install freestiler</span></code></pre></div>
 <p>Published PyPI wheels currently target Python 3.9 through 3.14.</p>
 <p>See the <a href="https://walker-data.com/freestiler/articles/python.html">Python Setup</a> article for more details.</p>
 </div>
@@ -99,7 +102,7 @@
 <h2 id="quick-start">Quick start<a class="anchor" aria-label="anchor" href="#quick-start"></a>
 </h2>
 <p>The main function is <code><a href="reference/freestile.html">freestile()</a></code>. Let’s tile the North Carolina counties dataset that ships with sf:</p>
-<div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://r-spatial.github.io/sf/" class="external-link">sf</a></span><span class="op">)</span></span>
 <span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://walker-data.com/freestiler/">freestiler</a></span><span class="op">)</span></span>
 <span></span>
@@ -107,7 +110,7 @@
 <span></span>
 <span><span class="fu"><a href="reference/freestile.html">freestile</a></span><span class="op">(</span><span class="va">nc</span>, <span class="st">"nc_counties.pmtiles"</span>, layer_name <span class="op">=</span> <span class="st">"counties"</span><span class="op">)</span></span></code></pre></div>
 <p>That’s useful for checking your installation, but the same API handles much bigger data. Here we tile all 242,000 US block groups from <a href="https://github.com/walkerke/tigris" class="external-link">tigris</a>:</p>
-<div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://github.com/walkerke/tigris" class="external-link">tigris</a></span><span class="op">)</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/options.html" class="external-link">options</a></span><span class="op">(</span>tigris_use_cache <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span></span>
 <span></span>
@@ -125,10 +128,10 @@
 <h2 id="viewing-tiles">Viewing tiles<a class="anchor" aria-label="anchor" href="#viewing-tiles"></a>
 </h2>
 <p>The quickest way to view a tileset is <code><a href="reference/view_tiles.html">view_tiles()</a></code>, which starts a local server and opens an interactive map:</p>
-<div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="reference/view_tiles.html">view_tiles</a></span><span class="op">(</span><span class="st">"us_bgs.pmtiles"</span><span class="op">)</span></span></code></pre></div>
 <p>For more control, use <code><a href="reference/serve_tiles.html">serve_tiles()</a></code> to start a local server and build your map with <a href="https://walker-data.com/mapgl/" class="external-link">mapgl</a>:</p>
-<div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://walker-data.com/mapgl/" class="external-link">mapgl</a></span><span class="op">)</span></span>
 <span></span>
 <span><span class="fu"><a href="reference/serve_tiles.html">serve_tiles</a></span><span class="op">(</span><span class="st">"us_bgs.pmtiles"</span><span class="op">)</span></span>
@@ -156,14 +159,14 @@
 <h2 id="duckdb-queries">DuckDB queries<a class="anchor" aria-label="anchor" href="#duckdb-queries"></a>
 </h2>
 <p>If your data lives in DuckDB, <code><a href="reference/freestile_query.html">freestile_query()</a></code> lets you filter, join, and transform with SQL before tiling:</p>
-<div class="sourceCode" id="cb8"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="reference/freestile_query.html">freestile_query</a></span><span class="op">(</span></span>
 <span>  query <span class="op">=</span> <span class="st">"SELECT * FROM read_parquet('blocks.parquet') WHERE state = 'NC'"</span>,</span>
 <span>  output <span class="op">=</span> <span class="st">"nc_blocks.pmtiles"</span>,</span>
 <span>  layer_name <span class="op">=</span> <span class="st">"blocks"</span></span>
 <span><span class="op">)</span></span></code></pre></div>
 <p>For very large point datasets, the streaming pipeline avoids loading the full result into memory. On a recent run, <code><a href="reference/freestile_query.html">freestile_query()</a></code> streamed 146 million US job points from DuckDB into a 2.3 GB PMTiles archive in about 12 minutes:</p>
-<div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="reference/freestile_query.html">freestile_query</a></span><span class="op">(</span></span>
 <span>  query <span class="op">=</span> <span class="st">"SELECT naics, state, ST_Point(lon, lat) AS geometry FROM jobs_dots"</span>,</span>
 <span>  output <span class="op">=</span> <span class="st">"us_jobs_dots.pmtiles"</span>,</span>
@@ -183,7 +186,7 @@
 <h2 id="direct-file-input">Direct file input<a class="anchor" aria-label="anchor" href="#direct-file-input"></a>
 </h2>
 <p>You can tile spatial files without loading them into R first:</p>
-<div class="sourceCode" id="cb10"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb11"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="co"># GeoParquet</span></span>
 <span><span class="fu"><a href="reference/freestile_file.html">freestile_file</a></span><span class="op">(</span><span class="st">"census_blocks.parquet"</span>, <span class="st">"blocks.pmtiles"</span><span class="op">)</span></span>
 <span></span>
@@ -193,7 +196,7 @@
 <div class="section level2">
 <h2 id="multi-layer-tilesets">Multi-layer tilesets<a class="anchor" aria-label="anchor" href="#multi-layer-tilesets"></a>
 </h2>
-<div class="sourceCode" id="cb11"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb12"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">pts</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://r-spatial.github.io/sf/reference/geos_unary.html" class="external-link">st_centroid</a></span><span class="op">(</span><span class="va">nc</span><span class="op">)</span></span>
 <span></span>
 <span><span class="fu"><a href="reference/freestile.html">freestile</a></span><span class="op">(</span></span>
@@ -227,6 +230,7 @@
   </main><aside class="col-md-3"><div class="links">
 <h2 data-toc-skip>Links</h2>
 <ul class="list-unstyled">
+<li><a href="https://cloud.r-project.org/package=freestiler" class="external-link">View on CRAN</a></li>
 <li><a href="https://github.com/walkerke/freestiler/" class="external-link">Browse source code</a></li>
 <li><a href="https://github.com/walkerke/freestiler/issues" class="external-link">Report a bug</a></li>
 </ul>
