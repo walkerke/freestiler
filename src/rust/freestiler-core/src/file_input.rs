@@ -91,10 +91,22 @@ fn wkb_to_geometry(wkb_bytes: &[u8]) -> Option<Geometry> {
         geo_types::Geometry::MultiPoint(mp) => Some(Geometry::MultiPoint(mp)),
         geo_types::Geometry::LineString(ls) => Some(Geometry::LineString(ls)),
         geo_types::Geometry::MultiLineString(mls) => Some(Geometry::MultiLineString(mls)),
-        geo_types::Geometry::Polygon(p) => Some(Geometry::Polygon(p)),
-        geo_types::Geometry::MultiPolygon(mp) => Some(Geometry::MultiPolygon(mp)),
+        geo_types::Geometry::Polygon(p) => Some(Geometry::Polygon(shrink_polygon(p))),
+        geo_types::Geometry::MultiPolygon(mp) => Some(Geometry::MultiPolygon(
+            geo_types::MultiPolygon(mp.0.into_iter().map(shrink_polygon).collect()),
+        )),
         _ => None,
     }
+}
+
+/// geozero's WKB reader leaves an empty-but-allocated interior-ring Vec on
+/// every single-ring polygon; at millions of features those dangling
+/// allocations add up, so release them here.
+#[cfg(any(feature = "geoparquet", feature = "duckdb"))]
+fn shrink_polygon(poly: geo_types::Polygon<f64>) -> geo_types::Polygon<f64> {
+    let (exterior, mut interiors) = poly.into_inner();
+    interiors.shrink_to_fit();
+    geo_types::Polygon::new(exterior, interiors)
 }
 
 // ---------------------------------------------------------------------------
@@ -126,11 +138,16 @@ mod geoparquet_impl {
 
         check_crs_is_wgs84(builder.metadata(), &geom_col_name)?;
 
+        let num_rows = builder.metadata().file_metadata().num_rows().max(0) as usize;
+
         let reader = builder
             .build()
             .map_err(|e| format!("Cannot build reader: {}", e))?;
 
         let mut features: Vec<Feature> = Vec::new();
+        features
+            .try_reserve_exact(num_rows)
+            .map_err(|e| format!("Cannot allocate memory for {} features: {}", num_rows, e))?;
         let mut prop_names: Vec<String> = Vec::new();
         let mut prop_types: Vec<String> = Vec::new();
         let mut first_batch = true;

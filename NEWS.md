@@ -1,5 +1,24 @@
 # freestiler 0.2.0
 
+* Tile generation now uses dramatically less memory on large inputs. Encoded
+  tiles are compressed and spooled to a temporary file as they are produced
+  instead of being accumulated in RAM across all zoom levels, and the PMTiles
+  archive is assembled by streaming from that spool. Together with allocation
+  fixes in the GeoParquet reader and MVT encoder, peak memory for
+  multi-million-feature polygon inputs drops to roughly the cost of the
+  decoded features themselves. Note the tradeoff: tile data is staged on disk,
+  so a build transiently needs about twice the final archive size in free
+  space.
+* Output archives are now written atomically: tiles are assembled in a
+  temporary sibling file that is renamed over the destination only on
+  success. A failed run no longer leaves a partial archive, and an existing
+  output file is preserved until its replacement is complete. Relatedly,
+  `overwrite = TRUE` is now respected through the DuckDB and CRS-reprojection
+  fallback paths instead of being reset to `FALSE` internally.
+* Identical tiles are no longer deduplicated within the archive (a
+  micro-optimization measured at ~0.01% of archive size on real data); the
+  PMTiles `clustered` header flag is now computed from the actual tile data
+  layout rather than always claimed.
 * Thin (sub-pixel-width) polygons no longer flicker in and out across zoom
   levels (#13). A polygon that collapses on a tile's integer pixel grid is
   now replaced by a one-pixel square at its centroid instead of being

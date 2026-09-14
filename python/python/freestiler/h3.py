@@ -191,13 +191,10 @@ def freestile_h3(
         raise ValueError("fade_overlap must be a non-negative integer.")
 
     output = Path(output).resolve()
-    if output.exists():
-        if overwrite:
-            output.unlink()
-        else:
-            raise FileExistsError(
-                f"Output file already exists: {output}. Set overwrite=True to replace."
-            )
+    if output.exists() and not overwrite:
+        raise FileExistsError(
+            f"Output file already exists: {output}. Set overwrite=True to replace."
+        )
 
     agg_spec = _parse_agg(agg)
 
@@ -277,7 +274,7 @@ def freestile_h3(
             tile_format=tile_format,
             min_zoom=min_zoom,
             max_zoom=max_zoom,
-            overwrite=False,
+            overwrite=overwrite,
             quiet=quiet,
         )
     finally:

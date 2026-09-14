@@ -96,7 +96,7 @@ pub fn encode_tile_multilayer(
         let mut keys: Vec<String> = Vec::new();
         let mut key_map: HashMap<String, u32> = HashMap::new();
         let mut values: Vec<Value> = Vec::new();
-        let mut value_map: HashMap<String, u32> = HashMap::new();
+        let mut value_map: HashMap<PropKey, u32> = HashMap::new();
         let mut tile_features: Vec<TileFeature> = Vec::new();
 
         for feature in features {
@@ -121,18 +121,25 @@ pub fn encode_tile_multilayer(
                 }
 
                 let key_name = &property_names[i];
-                let key_idx = *key_map.entry(key_name.clone()).or_insert_with(|| {
-                    let idx = keys.len() as u32;
-                    keys.push(key_name.clone());
-                    idx
-                });
+                let key_idx = match key_map.get(key_name.as_str()) {
+                    Some(&idx) => idx,
+                    None => {
+                        let idx = keys.len() as u32;
+                        keys.push(key_name.clone());
+                        key_map.insert(key_name.clone(), idx);
+                        idx
+                    }
+                };
 
-                let value_key = property_value_key(prop);
-                let value_idx = *value_map.entry(value_key).or_insert_with(|| {
-                    let idx = values.len() as u32;
-                    values.push(property_to_value(prop));
-                    idx
-                });
+                let value_idx = match value_map.get(&PropKey::from(prop)) {
+                    Some(&idx) => idx,
+                    None => {
+                        let idx = values.len() as u32;
+                        values.push(property_to_value(prop));
+                        value_map.insert(PropKey::from(prop), idx);
+                        idx
+                    }
+                };
 
                 tags.push(key_idx);
                 tags.push(value_idx);
@@ -333,14 +340,26 @@ fn encode_quant_ring_cmds(coords: &[(i32, i32)], cx: &mut i32, cy: &mut i32) -> 
     cmds
 }
 
-/// Create a unique string key for a property value (for deduplication)
-fn property_value_key(prop: &PropertyValue) -> String {
-    match prop {
-        PropertyValue::String(s) => format!("s:{}", s),
-        PropertyValue::Int(i) => format!("i:{}", i),
-        PropertyValue::Double(d) => format!("d:{}", d),
-        PropertyValue::Bool(b) => format!("b:{}", b),
-        PropertyValue::Null => "null".to_string(),
+/// Borrowed dictionary key for value deduplication: probing the map allocates
+/// nothing, and doubles are keyed by their bit pattern so Eq/Hash are total.
+#[derive(PartialEq, Eq, Hash)]
+enum PropKey<'a> {
+    Str(&'a str),
+    Int(i64),
+    Double(u64),
+    Bool(bool),
+    Null,
+}
+
+impl<'a> From<&'a PropertyValue> for PropKey<'a> {
+    fn from(prop: &'a PropertyValue) -> Self {
+        match prop {
+            PropertyValue::String(s) => PropKey::Str(s),
+            PropertyValue::Int(i) => PropKey::Int(*i),
+            PropertyValue::Double(d) => PropKey::Double(d.to_bits()),
+            PropertyValue::Bool(b) => PropKey::Bool(*b),
+            PropertyValue::Null => PropKey::Null,
+        }
     }
 }
 

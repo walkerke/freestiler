@@ -1,14 +1,8 @@
 #[cfg(feature = "duckdb")]
 use duckdb::{params, Connection};
-use pmtiles2::util::tile_id;
-use pmtiles2::Entry;
-use std::fs::{self, File};
-use std::io::Write;
-use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::engine::{ProgressReporter, TileConfig};
-use crate::pmtiles_writer::{self, LayerMeta, TileFormat};
+use crate::pmtiles_writer::{self, unique_suffix, LayerMeta, TileFormat, TileSpool};
 use crate::tiler::{Feature, Geometry, PropertyValue, TileCoord};
 use crate::{coalesce, mlt, mvt, tiler};
 
@@ -155,15 +149,13 @@ pub fn generate_pmtiles_from_duckdb_query(
         ));
     }
 
-    let entries = std::mem::take(&mut tile_spool.entries);
     reporter.report(&format!(
         "  Writing PMTiles archive ({} tiles) ...",
-        entries.len()
+        tile_spool.len()
     ));
     pmtiles_writer::write_pmtiles_from_spool(
         output_path,
-        &tile_spool.path,
-        entries,
+        &mut tile_spool,
         config.tile_format,
         &[layer_meta],
         config.min_zoom,
@@ -428,54 +420,6 @@ struct PointStats {
     only_points: bool,
 }
 
-struct TileSpool {
-    path: PathBuf,
-    file: File,
-    offset: u64,
-    entries: Vec<Entry>,
-}
-
-impl TileSpool {
-    fn new() -> Result<Self, String> {
-        let path = temp_file_path("tiles");
-        let file = File::create(&path).map_err(|e| {
-            format!(
-                "Cannot create temporary tile spool {}: {}",
-                path.display(),
-                e
-            )
-        })?;
-        Ok(Self {
-            path,
-            file,
-            offset: 0,
-            entries: Vec::new(),
-        })
-    }
-
-    fn write_tile(&mut self, coord: TileCoord, bytes: &[u8]) -> Result<(), String> {
-        let compressed = pmtiles_writer::gzip_compress(bytes)?;
-        self.file
-            .write_all(&compressed)
-            .map_err(|e| format!("Cannot write tile spool: {}", e))?;
-
-        self.entries.push(Entry {
-            tile_id: tile_id(coord.z, coord.x as u64, coord.y as u64),
-            offset: self.offset,
-            length: compressed.len() as u32,
-            run_length: 1,
-        });
-        self.offset += compressed.len() as u64;
-        Ok(())
-    }
-}
-
-impl Drop for TileSpool {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
-    }
-}
-
 fn write_tile(
     spool: &mut TileSpool,
     coord: TileCoord,
@@ -659,16 +603,4 @@ fn quote_ident(name: &str) -> String {
 
 fn quote_string(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
-}
-
-fn temp_file_path(stem: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("freestiler_{}_{}.tmp", stem, unique_suffix()))
-}
-
-fn unique_suffix() -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    format!("{}_{}", std::process::id(), nanos)
 }

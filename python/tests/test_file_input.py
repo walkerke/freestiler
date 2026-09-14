@@ -139,6 +139,19 @@ def test_parquet_no_overwrite(tmp_path, parquet_file):
         freestile_file(parquet_file, output, max_zoom=4, quiet=True, overwrite=False)
 
 
+@requires_geoparquet
+def test_failed_run_preserves_existing_output(tmp_path):
+    output = tmp_path / "out.pmtiles"
+    output.write_bytes(b"KEEP")
+
+    bad_parquet = tmp_path / "bad.parquet"
+    bad_parquet.write_bytes(b"this is not a parquet file")
+
+    with pytest.raises(RuntimeError):
+        freestile_file(bad_parquet, output, max_zoom=4, quiet=True)
+    assert output.read_bytes() == b"KEEP"
+
+
 def test_parquet_missing_file(tmp_path):
     output = tmp_path / "out.pmtiles"
     with pytest.raises(FileNotFoundError):
