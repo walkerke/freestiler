@@ -438,8 +438,10 @@ fn refine_partitions(
                 ));
             }
             let staging = dir.with_extension("refine");
+            // PARTITION_BY strips __part from the written files, so the
+            // refined key is a fresh column, not a REPLACE.
             let copy_sql = format!(
-                "COPY (SELECT * REPLACE ({} AS __part)
+                "COPY (SELECT *, {} AS __part
                        FROM read_parquet({}, hive_partitioning = false))
                  TO {} (FORMAT PARQUET, COMPRESSION ZSTD, PARTITION_BY (__part))",
                 partition_expr(z_new, "__lon", "__lat"),
@@ -1254,6 +1256,10 @@ mod tests {
         }
     }
 
+    // Tests below read or set process-global env vars; serialize them.
+    #[cfg(feature = "duckdb")]
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
     #[cfg(feature = "duckdb")]
     fn tiny_query_sql(n: u64) -> String {
         // Points spanning several z5 cells so both direct and bucket paths run.
@@ -1291,6 +1297,7 @@ mod tests {
     #[cfg(feature = "duckdb")]
     #[test]
     fn partitioned_streaming_is_deterministic() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let dir = std::env::temp_dir().join(format!("freestiler_sm_test_{}", unique_suffix()));
         fs::create_dir_all(&dir).unwrap();
         let out_a = dir.join("a.pmtiles");
@@ -1319,6 +1326,40 @@ mod tests {
             "z0 bucket tile missing"
         );
 
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(feature = "duckdb")]
+    #[test]
+    fn refinement_splits_oversized_partitions() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(format!("freestiler_sm_refine_{}", unique_suffix()));
+        fs::create_dir_all(&dir).unwrap();
+        let out_small = dir.join("small_units.pmtiles");
+        let out_default = dir.join("default_units.pmtiles");
+
+        // Force multi-pass refinement: 20K points, 500-row unit budget.
+        std::env::set_var("FREESTILER_UNIT_BUDGET_ROWS", "500");
+        let rows = run_tiny(&out_small, None);
+        std::env::remove_var("FREESTILER_UNIT_BUDGET_ROWS");
+        assert_eq!(rows, 20_000);
+
+        // Refined output must be tile-for-tile identical to the unrefined
+        // run (drop off ⇒ partitioning must not affect content at all).
+        run_tiny(&out_default, None);
+        let a = pmtiles2::PMTiles::from_reader(fs::File::open(&out_small).unwrap()).unwrap();
+        let b = pmtiles2::PMTiles::from_reader(fs::File::open(&out_default).unwrap()).unwrap();
+        assert_eq!(a.num_tiles(), b.num_tiles());
+        let (mut a, mut b) = (a, b);
+        for z in 0..=7u8 {
+            for x in 0..(1u64 << z) {
+                for y in 0..(1u64 << z) {
+                    let ta = a.get_tile(x, y, z).unwrap();
+                    let tb = b.get_tile(x, y, z).unwrap();
+                    assert_eq!(ta, tb, "tile z{z}/{x}/{y} differs");
+                }
+            }
+        }
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1359,6 +1400,7 @@ mod tests {
     #[cfg(feature = "duckdb")]
     #[test]
     fn tile_budget_exceeded_errors_and_preserves_output() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let dir = std::env::temp_dir().join(format!("freestiler_sm_budget_{}", unique_suffix()));
         fs::create_dir_all(&dir).unwrap();
         let out = dir.join("budget.pmtiles");
