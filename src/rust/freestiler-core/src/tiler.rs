@@ -147,15 +147,18 @@ pub fn tile_morton_key(geom: &Geometry, west: f64, east: f64, south: f64, north:
 const ASSIGN_BUFFER_FRACTION: f64 = 0.05;
 
 /// Assign features to tiles using optional geometry overrides for bbox calculation.
-/// When `geom_overrides[i]` is `Some(geom)`, uses that geometry's bbox instead of
-/// the feature's original geometry. This allows using pre-simplified geometries
-/// (e.g. VW-simplified lines) for tighter tile assignment.
+/// When `geom_overrides` is `Some` and `geom_overrides[i]` is `Some(geom)`, uses
+/// that geometry's bbox instead of the feature's original geometry. This allows
+/// using pre-simplified geometries (e.g. VW-simplified lines) for tighter tile
+/// assignment. When `drop_mask` is `Some`, features with `drop_mask[i] == false`
+/// are skipped entirely and never enter the map.
 ///
 /// Features are assigned using buffered tile bounds so that features in the
 /// clip buffer zone are included — preventing seams at tile boundaries.
 pub fn assign_features_to_tiles_with_geoms(
     features: &[Feature],
-    geom_overrides: &[Option<Geometry>],
+    geom_overrides: Option<&[Option<Geometry>]>,
+    drop_mask: Option<&[bool]>,
     zoom: u8,
 ) -> HashMap<TileCoord, Vec<usize>> {
     let mut tile_map: HashMap<TileCoord, Vec<usize>> = HashMap::new();
@@ -170,7 +173,12 @@ pub fn assign_features_to_tiles_with_geoms(
     let buf_y = tile_width_deg * ASSIGN_BUFFER_FRACTION;
 
     for (idx, feature) in features.iter().enumerate() {
-        let bbox = match &geom_overrides[idx] {
+        if let Some(mask) = drop_mask {
+            if !mask[idx] {
+                continue;
+            }
+        }
+        let bbox = match geom_overrides.and_then(|g| g[idx].as_ref()) {
             Some(g) => geometry_bbox(g),
             None => geometry_bbox(&feature.geometry),
         };

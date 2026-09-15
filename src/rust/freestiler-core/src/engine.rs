@@ -1,8 +1,9 @@
+use pmtiles2::util::tile_id;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
-use crate::pmtiles_writer::TileFormat;
+use crate::pmtiles_writer::{TileFormat, TileSpool};
 use crate::tiler::{Feature, Geometry, LayerData, TileCoord};
 use crate::{clip, cluster, coalesce, drop, mlt, mvt, pmtiles_writer, simplify, tiler};
 
@@ -60,13 +61,14 @@ pub fn compute_all_bounds(layers: &[LayerData]) -> (f64, f64, f64, f64) {
     (west, south, east, north)
 }
 
-/// Generate tiles from layers, collecting into a Vec.
-/// Returns (tiles, layer_metas, bounds) for PMTiles writing.
+/// Generate tiles from layers, spooling each encoded (gzip-compressed) tile
+/// to disk as it is produced so peak memory stays bounded.
 pub fn generate_tiles(
     layers: &[LayerData],
     config: &TileConfig,
     reporter: &dyn ProgressReporter,
-) -> Result<Vec<(TileCoord, Vec<u8>)>, String> {
+    spool: &mut TileSpool,
+) -> Result<(), String> {
     let min_z = config.min_zoom;
     let max_z = config.max_zoom;
 
@@ -140,8 +142,22 @@ pub fn generate_tiles(
     let do_coalesce = config.coalesce;
     let format = config.tile_format;
 
+    // Which layers contain line features (computed once — only lines are
+    // presimplified per zoom, so polygon/point layers skip that buffer).
+    let layer_has_lines: Vec<bool> = layers
+        .iter()
+        .map(|l| {
+            l.features.iter().any(|f| {
+                matches!(
+                    &f.geometry,
+                    Geometry::LineString(_) | Geometry::MultiLineString(_)
+                )
+            })
+        })
+        .collect();
+
     // --- Main tile generation loop ---
-    let mut all_tiles: Vec<(TileCoord, Vec<u8>)> = Vec::new();
+    let mut total_tiles: u64 = 0;
     let total_start = Instant::now();
 
     for zoom in min_z..=max_z {
@@ -154,8 +170,16 @@ pub fn generate_tiles(
             features: &'a [Feature],
             prop_names: &'a [String],
             tile_map: HashMap<TileCoord, Vec<usize>>,
-            simplified_geoms: Vec<Option<Geometry>>,
-            drop_mask: Option<Vec<bool>>,
+            simplified_geoms: Option<Vec<Option<Geometry>>>,
+        }
+
+        impl ActiveLayer<'_> {
+            fn geom_for(&self, idx: usize) -> &Geometry {
+                self.simplified_geoms
+                    .as_ref()
+                    .and_then(|v| v[idx].as_ref())
+                    .unwrap_or(&self.features[idx].geometry)
+            }
         }
 
         let mut active_layers: Vec<ActiveLayer> = Vec::new();
@@ -182,17 +206,25 @@ pub fn generate_tiles(
                 &layer.prop_names
             };
 
-            // VW presimplify lines
-            let vw_tol = simplify::vw_tolerance_for_zoom(zoom);
-            let simplified_geoms: Vec<Option<Geometry>> = features
-                .par_iter()
-                .map(|f| match &f.geometry {
-                    Geometry::LineString(_) | Geometry::MultiLineString(_) if do_simplify => {
-                        Some(simplify::presimplify_line_vw(&f.geometry, vw_tol))
-                    }
-                    _ => None,
-                })
-                .collect();
+            // VW presimplify lines (only for layers that actually have lines —
+            // for polygon/point layers this buffer would be all-None waste)
+            let simplified_geoms: Option<Vec<Option<Geometry>>> =
+                if do_simplify && !using_clusters && layer_has_lines[li] {
+                    let vw_tol = simplify::vw_tolerance_for_zoom(zoom);
+                    Some(
+                        features
+                            .par_iter()
+                            .map(|f| match &f.geometry {
+                                Geometry::LineString(_) | Geometry::MultiLineString(_) => {
+                                    Some(simplify::presimplify_line_vw(&f.geometry, vw_tol))
+                                }
+                                _ => None,
+                            })
+                            .collect(),
+                    )
+                } else {
+                    None
+                };
 
             // Compute drop mask
             let base_zoom_val = config.base_zoom;
@@ -210,9 +242,13 @@ pub fn generate_tiles(
                 None
             };
 
-            // Assign features to tiles
-            let tile_map =
-                tiler::assign_features_to_tiles_with_geoms(features, &simplified_geoms, zoom);
+            // Assign features to tiles; dropped features never enter the map
+            let tile_map = tiler::assign_features_to_tiles_with_geoms(
+                features,
+                simplified_geoms.as_deref(),
+                drop_mask.as_deref(),
+                zoom,
+            );
 
             active_layers.push(ActiveLayer {
                 layer_idx: li,
@@ -220,7 +256,6 @@ pub fn generate_tiles(
                 prop_names,
                 tile_map,
                 simplified_geoms,
-                drop_mask,
             });
         }
 
@@ -238,102 +273,110 @@ pub fn generate_tiles(
             zoom, max_z, n_tiles
         ));
 
-        // Process tiles in parallel
-        let tile_coords: Vec<TileCoord> = all_coords.into_iter().collect();
-        let zoom_tiles: Vec<(TileCoord, Vec<u8>)> = tile_coords
-            .into_par_iter()
-            .filter_map(|coord| {
-                // For each layer, process features for this tile
-                let mut tile_layer_data: Vec<(&str, &[String], Vec<Feature>)> = Vec::new();
+        // Process tiles in tile_id-sorted chunks: parallel encode + compress
+        // within a chunk, then append the chunk to the spool and drop it.
+        // Bounds peak memory to one chunk's compressed tiles (plus in-flight
+        // encodes) instead of a whole zoom's uncompressed tiles, and keeps the
+        // spool data in ascending tile_id order (zooms ascend and tile_id is
+        // monotonic in zoom), so the archive stays clustered.
+        let mut tile_coords: Vec<TileCoord> = all_coords.into_iter().collect();
+        tile_coords.sort_by_key(|c| tile_id(c.z, c.x as u64, c.y as u64));
+        let chunk_size = rayon::current_num_threads().saturating_mul(4).max(16);
 
-                for al in &active_layers {
-                    let layer = &layers[al.layer_idx];
+        let mut n_encoded: u64 = 0;
+        for coord_chunk in tile_coords.chunks(chunk_size) {
+            let chunk_tiles: Vec<(TileCoord, Vec<u8>)> = coord_chunk
+                .par_iter()
+                .filter_map(|&coord| {
+                    // For each layer, process features for this tile
+                    let mut tile_layer_data: Vec<(&str, &[String], Vec<Feature>)> = Vec::new();
 
-                    if let Some(feature_indices) = al.tile_map.get(&coord) {
-                        let mut tile_feats: Vec<Feature> = feature_indices
-                            .par_iter()
-                            .filter_map(|&idx| {
-                                // Check drop mask
-                                if let Some(ref mask) = al.drop_mask {
-                                    if !mask[idx] {
-                                        return None;
-                                    }
-                                }
+                    for al in &active_layers {
+                        let layer = &layers[al.layer_idx];
 
-                                let feature = &al.features[idx];
-                                let geom_to_process = match &al.simplified_geoms[idx] {
-                                    Some(g) => g,
-                                    None => &feature.geometry,
-                                };
+                        if let Some(feature_indices) = al.tile_map.get(&coord) {
+                            let mut tile_feats: Vec<Feature> = feature_indices
+                                .iter()
+                                .filter_map(|&idx| {
+                                    let feature = &al.features[idx];
+                                    let geom_to_process = al.geom_for(idx);
 
-                                // Clip to tile boundaries
-                                let clipped = clip::clip_geometry_to_tile(geom_to_process, &coord)?;
+                                    // Clip to tile boundaries
+                                    let clipped =
+                                        clip::clip_geometry_to_tile(geom_to_process, &coord)?;
 
-                                // Snap to tile pixel grid
-                                let geometry = if do_simplify {
-                                    simplify::simplify_geometry(&clipped, &coord)
-                                } else {
-                                    clipped
-                                };
+                                    // Snap to tile pixel grid
+                                    let geometry = if do_simplify {
+                                        simplify::simplify_geometry(&clipped, &coord)
+                                    } else {
+                                        clipped
+                                    };
 
-                                Some(Feature {
-                                    id: feature.id,
-                                    geometry,
-                                    properties: feature.properties.clone(),
+                                    Some(Feature {
+                                        id: feature.id,
+                                        geometry,
+                                        properties: feature.properties.clone(),
+                                    })
                                 })
-                            })
-                            .collect();
+                                .collect();
 
-                        // Sort features spatially (Morton curve) for better compression
-                        if tile_feats.len() > 1 {
-                            let tb = tiler::tile_bounds(&coord);
-                            let tw = tb.min().x;
-                            let te = tb.max().x;
-                            let ts = tb.min().y;
-                            let tn = tb.max().y;
-                            tile_feats.sort_by(|a, b| {
-                                let key_a = tiler::tile_morton_key(&a.geometry, tw, te, ts, tn);
-                                let key_b = tiler::tile_morton_key(&b.geometry, tw, te, ts, tn);
-                                key_a.cmp(&key_b).then(a.id.cmp(&b.id))
-                            });
-                        }
+                            // Sort features spatially (Morton curve) for better compression
+                            if tile_feats.len() > 1 {
+                                let tb = tiler::tile_bounds(&coord);
+                                let tw = tb.min().x;
+                                let te = tb.max().x;
+                                let ts = tb.min().y;
+                                let tn = tb.max().y;
+                                tile_feats.sort_by(|a, b| {
+                                    let key_a = tiler::tile_morton_key(&a.geometry, tw, te, ts, tn);
+                                    let key_b = tiler::tile_morton_key(&b.geometry, tw, te, ts, tn);
+                                    key_a.cmp(&key_b).then(a.id.cmp(&b.id))
+                                });
+                            }
 
-                        // Coalesce features within this tile/layer
-                        if do_coalesce && !tile_feats.is_empty() {
-                            tile_feats = coalesce::coalesce_features(tile_feats, al.prop_names);
-                        }
+                            // Coalesce features within this tile/layer
+                            if do_coalesce && !tile_feats.is_empty() {
+                                tile_feats = coalesce::coalesce_features(tile_feats, al.prop_names);
+                            }
 
-                        if !tile_feats.is_empty() {
-                            tile_layer_data.push((&layer.name, al.prop_names, tile_feats));
+                            if !tile_feats.is_empty() {
+                                tile_layer_data.push((&layer.name, al.prop_names, tile_feats));
+                            }
                         }
                     }
-                }
 
-                if tile_layer_data.is_empty() {
-                    return None;
-                }
+                    if tile_layer_data.is_empty() {
+                        return None;
+                    }
 
-                // Build references for the encode functions
-                let layer_refs: Vec<(&str, &[String], &[Feature])> = tile_layer_data
-                    .iter()
-                    .map(|(name, props, feats)| (*name, *props, feats.as_slice()))
-                    .collect();
+                    // Build references for the encode functions
+                    let layer_refs: Vec<(&str, &[String], &[Feature])> = tile_layer_data
+                        .iter()
+                        .map(|(name, props, feats)| (*name, *props, feats.as_slice()))
+                        .collect();
 
-                let tile_bytes = match format {
-                    TileFormat::Mvt => mvt::encode_tile_multilayer(&coord, &layer_refs),
-                    TileFormat::Mlt => mlt::encode_tile_multilayer(&coord, &layer_refs),
-                };
+                    let tile_bytes = match format {
+                        TileFormat::Mvt => mvt::encode_tile_multilayer(&coord, &layer_refs),
+                        TileFormat::Mlt => mlt::encode_tile_multilayer(&coord, &layer_refs),
+                    };
 
-                if tile_bytes.is_empty() {
-                    return None;
-                }
+                    if tile_bytes.is_empty() {
+                        return None;
+                    }
 
-                Some((coord, tile_bytes))
-            })
-            .collect();
+                    let compressed = pmtiles_writer::gzip_compress(&tile_bytes)
+                        .expect("gzip compression failed");
+                    Some((coord, compressed))
+                })
+                .collect();
 
-        let n_encoded = zoom_tiles.len();
-        all_tiles.extend(zoom_tiles);
+            for (coord, compressed) in &chunk_tiles {
+                spool.write_compressed_tile(*coord, compressed)?;
+            }
+            n_encoded += chunk_tiles.len() as u64;
+        }
+
+        total_tiles += n_encoded;
 
         let elapsed = zoom_start.elapsed().as_secs_f64();
         reporter.report(&format!(
@@ -344,11 +387,11 @@ pub fn generate_tiles(
 
     reporter.report(&format!(
         "  Total: {} tiles in {:.1}s",
-        all_tiles.len(),
+        total_tiles,
         total_start.elapsed().as_secs_f64()
     ));
 
-    Ok(all_tiles)
+    Ok(())
 }
 
 /// Full pipeline: generate tiles and write PMTiles archive
@@ -397,20 +440,17 @@ pub fn generate_pmtiles(
         })
         .collect();
 
-    let all_tiles = generate_tiles(layers, config, reporter)?;
-
-    if all_tiles.is_empty() {
-        return Err("No tiles generated".to_string());
-    }
+    let mut spool = TileSpool::new()?;
+    generate_tiles(layers, config, reporter, &mut spool)?;
 
     reporter.report(&format!(
         "  Writing PMTiles archive ({} tiles) ...",
-        all_tiles.len()
+        spool.len()
     ));
     let write_start = Instant::now();
-    pmtiles_writer::write_pmtiles(
+    pmtiles_writer::write_pmtiles_from_spool(
         output_path,
-        all_tiles,
+        &mut spool,
         config.tile_format,
         &layer_metas,
         config.min_zoom,

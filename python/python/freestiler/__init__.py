@@ -146,13 +146,10 @@ def freestile(
 
     output = Path(output).resolve()
 
-    if output.exists():
-        if overwrite:
-            output.unlink()
-        else:
-            raise FileExistsError(
-                f"Output file already exists: {output}. Set overwrite=True to replace."
-            )
+    if output.exists() and not overwrite:
+        raise FileExistsError(
+            f"Output file already exists: {output}. Set overwrite=True to replace."
+        )
 
     # Determine default layer_name
     if layer_name is None and isinstance(input, gpd.GeoDataFrame):
@@ -428,13 +425,10 @@ def freestile_file(
     if not input_path.exists():
         raise FileNotFoundError(f"Input file not found: {input_path}")
 
-    if output.exists():
-        if overwrite:
-            output.unlink()
-        else:
-            raise FileExistsError(
-                f"Output file already exists: {output}. Set overwrite=True to replace."
-            )
+    if output.exists() and not overwrite:
+        raise FileExistsError(
+            f"Output file already exists: {output}. Set overwrite=True to replace."
+        )
 
     if layer_name is None:
         layer_name = output.stem
@@ -584,13 +578,10 @@ def freestile_query(
 
     output = Path(output).resolve()
 
-    if output.exists():
-        if overwrite:
-            output.unlink()
-        else:
-            raise FileExistsError(
-                f"Output file already exists: {output}. Set overwrite=True to replace."
-            )
+    if output.exists() and not overwrite:
+        raise FileExistsError(
+            f"Output file already exists: {output}. Set overwrite=True to replace."
+        )
 
     if layer_name is None:
         layer_name = output.stem

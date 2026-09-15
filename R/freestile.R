@@ -129,13 +129,9 @@ freestile <- function(
 
   output <- normalizePath(output, mustWork = FALSE)
 
-  if (file.exists(output)) {
-    if (overwrite) {
-      unlink(output)
-    } else {
-      stop("Output file already exists. Set `overwrite = TRUE` to replace it.",
-        call. = FALSE)
-    }
+  if (file.exists(output) && !overwrite) {
+    stop("Output file already exists. Set `overwrite = TRUE` to replace it.",
+      call. = FALSE)
   }
 
   # Determine default layer_name from output if single-layer
@@ -406,13 +402,9 @@ freestile_file <- function(
   input <- normalizePath(input, mustWork = TRUE)
   output <- normalizePath(output, mustWork = FALSE)
 
-  if (file.exists(output)) {
-    if (overwrite) {
-      unlink(output)
-    } else {
-      stop("Output file already exists. Set `overwrite = TRUE` to replace it.",
-        call. = FALSE)
-    }
+  if (file.exists(output) && !overwrite) {
+    stop("Output file already exists. Set `overwrite = TRUE` to replace it.",
+      call. = FALSE)
   }
 
   if (is.null(layer_name)) {
@@ -453,7 +445,7 @@ freestile_file <- function(
         cluster_distance = cluster_distance,
         cluster_maxzoom = cluster_maxzoom,
         coalesce = coalesce, simplification = simplification,
-        overwrite = FALSE, quiet = quiet
+        overwrite = overwrite, quiet = quiet
       ))
     }
 
@@ -523,7 +515,7 @@ freestile_file <- function(
       cluster_distance = cluster_distance,
       cluster_maxzoom = cluster_maxzoom,
       coalesce = coalesce, simplification = simplification,
-      overwrite = FALSE, quiet = quiet
+      overwrite = overwrite, quiet = quiet
     ))
   }
 
@@ -635,13 +627,9 @@ freestile_query <- function(
 
   output <- normalizePath(output, mustWork = FALSE)
 
-  if (file.exists(output)) {
-    if (overwrite) {
-      unlink(output)
-    } else {
-      stop("Output file already exists. Set `overwrite = TRUE` to replace it.",
-        call. = FALSE)
-    }
+  if (file.exists(output) && !overwrite) {
+    stop("Output file already exists. Set `overwrite = TRUE` to replace it.",
+      call. = FALSE)
   }
 
   if (is.null(layer_name)) {
@@ -678,7 +666,7 @@ freestile_query <- function(
       cluster_distance = cluster_distance,
       cluster_maxzoom = cluster_maxzoom,
       coalesce = coalesce, simplification = simplification,
-      overwrite = FALSE, quiet = quiet
+      overwrite = overwrite, quiet = quiet
     ))
   }
 

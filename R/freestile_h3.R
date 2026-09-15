@@ -145,13 +145,9 @@ freestile_h3 <- function(
   }
 
   output <- normalizePath(output, mustWork = FALSE)
-  if (file.exists(output)) {
-    if (overwrite) {
-      unlink(output)
-    } else {
-      stop("Output file already exists. Set `overwrite = TRUE` to replace it.",
-        call. = FALSE)
-    }
+  if (file.exists(output) && !overwrite) {
+    stop("Output file already exists. Set `overwrite = TRUE` to replace it.",
+      call. = FALSE)
   }
 
   # Parse agg into SQL fragments once; reused per resolution
@@ -247,7 +243,7 @@ freestile_h3 <- function(
     tile_format = tile_format,
     min_zoom = min_zoom,
     max_zoom = max_zoom,
-    overwrite = FALSE,
+    overwrite = overwrite,
     quiet = quiet
   )
 }
