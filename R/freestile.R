@@ -578,6 +578,18 @@ freestile_file <- function(
 #'   enables the streaming point pipeline for large queries, `"always"` forces
 #'   it, and `"never"` uses the existing in-memory path.
 #'
+#' @details
+#' The streaming pipeline partitions the query result on disk and tiles each
+#' partition independently, so memory use stays bounded regardless of input
+#' size. Bulk temporary data lives in a private per-run directory (under the
+#' system temp directory, or `FREESTILER_TEMP_DIR` if set) and is removed
+#' when the run ends; plan for temporary disk space of roughly the input's
+#' size plus the output archive. `FREESTILER_DUCKDB_MEMORY` (e.g. `"16GB"`)
+#' caps DuckDB's memory, and `FREESTILER_STREAM_WORKERS` sets how many
+#' partitions are tiled concurrently (default 1). With `drop_rate`, point
+#' thinning is computed per partition: per-zoom density matches earlier
+#' releases but exact point membership near partition boundaries can differ.
+#'
 #' @return The output file path (invisibly).
 #'
 #' @examples

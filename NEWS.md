@@ -1,5 +1,19 @@
 # freestiler 0.2.0
 
+* The streaming point pipeline (`freestile_query()`) now partitions the query
+  result on disk and tiles each partition independently instead of sorting
+  the whole dataset at once. This removes the global sort that previously
+  spilled tens of gigabytes on very large inputs and makes billion-point
+  tiling feasible with bounded memory. Runs that would exhaust a resource now
+  stop with a clear error (naming the tile or region and suggesting
+  `drop_rate` or a higher `min_zoom`) rather than degrading, and a failed run
+  never disturbs an existing output. Optional environment variables:
+  `FREESTILER_TEMP_DIR` (where bulk temporary data goes),
+  `FREESTILER_DUCKDB_MEMORY`, and `FREESTILER_STREAM_WORKERS`.
+* With `drop_rate`, streaming point thinning is now computed per partition:
+  the per-zoom density is unchanged, but the exact points retained near
+  partition boundaries can differ from earlier releases. Without `drop_rate`
+  output is unchanged.
 * Tile generation now uses dramatically less memory on large inputs. Encoded
   tiles are compressed and spooled to a temporary file as they are produced
   instead of being accumulated in RAM across all zoom levels, and the PMTiles

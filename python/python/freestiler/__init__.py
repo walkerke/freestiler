@@ -561,6 +561,19 @@ def freestile_query(
     ------
     RuntimeError
         If freestiler was not compiled with DuckDB support.
+
+    Notes
+    -----
+    The streaming pipeline partitions the query result on disk and tiles
+    each partition independently, keeping memory bounded regardless of
+    input size. Bulk temporary data lives in a private per-run directory
+    (system temp, or ``FREESTILER_TEMP_DIR``) removed when the run ends;
+    plan for temporary disk space of roughly the input size plus the
+    output archive. ``FREESTILER_DUCKDB_MEMORY`` caps DuckDB memory and
+    ``FREESTILER_STREAM_WORKERS`` sets partition concurrency (default 1).
+    With ``drop_rate``, thinning is computed per partition: per-zoom
+    density matches earlier releases, but exact membership near partition
+    boundaries can differ.
     """
     if tile_format not in ("mlt", "mvt"):
         raise ValueError(f"tile_format must be 'mlt' or 'mvt', got '{tile_format}'")
