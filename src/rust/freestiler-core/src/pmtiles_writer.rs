@@ -52,7 +52,9 @@ pub struct TileSpool {
 
 impl TileSpool {
     pub fn new() -> Result<Self, String> {
-        let (file, path) = create_exclusive_temp(&std::env::temp_dir(), "freestiler_tiles")?;
+        // Owner-only permissions: the spool lives in the shared temp
+        // directory and holds the full tile data.
+        let (file, path) = create_exclusive_temp(&std::env::temp_dir(), "freestiler_tiles", true)?;
         Ok(Self {
             path,
             file: BufWriter::new(file),
@@ -163,7 +165,7 @@ pub fn write_pmtiles_from_spool(
             .and_then(|n| n.to_str())
             .unwrap_or("freestiler")
     );
-    let (output, tmp_path) = create_exclusive_temp(out_dir, &tmp_stem)?;
+    let (output, tmp_path) = create_exclusive_temp(out_dir, &tmp_stem, false)?;
     let mut guard = TempFileGuard {
         path: tmp_path.clone(),
         armed: true,
@@ -300,16 +302,23 @@ fn build_metadata_bytes(layers: &[LayerMeta]) -> Result<Vec<u8>, String> {
 }
 
 /// Create a uniquely named file in `dir`, exclusively (`create_new`), retrying
-/// on name collisions. Returns the open handle and the path.
-fn create_exclusive_temp(dir: &Path, stem: &str) -> Result<(File, PathBuf), String> {
+/// on name collisions. Returns the open handle and the path. With `private`,
+/// the file is created owner-only (0600) on Unix; without it the process
+/// umask applies, which is right for a temp file that will be renamed into
+/// place as the final output.
+fn create_exclusive_temp(dir: &Path, stem: &str, private: bool) -> Result<(File, PathBuf), String> {
+    let mut opts = OpenOptions::new();
+    opts.read(true).write(true).create_new(true);
+    #[cfg(unix)]
+    if private {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    #[cfg(not(unix))]
+    let _ = private;
     for _ in 0..16 {
         let candidate = dir.join(format!("{}.{}", stem, unique_suffix()));
-        match OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create_new(true)
-            .open(&candidate)
-        {
+        match opts.open(&candidate) {
             Ok(file) => return Ok((file, candidate)),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(e) => {
@@ -509,6 +518,52 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(fs::read(&out).unwrap(), b"PRECIOUS");
         fs::remove_file(&out).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn spool_file_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let spool = TileSpool::new().unwrap();
+        let mode = fs::metadata(&spool.path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[test]
+    fn failure_during_assembly_cleans_up_and_preserves_destination() {
+        let dir = std::env::temp_dir().join(format!("freestiler_test_fail_{}", unique_suffix()));
+        fs::create_dir(&dir).unwrap();
+        let out = dir.join("out.pmtiles");
+        fs::write(&out, b"PRECIOUS").unwrap();
+
+        let mut spool = TileSpool::new().unwrap();
+        spool.write_tile(coord(0, 0, 0), b"tile-bytes").unwrap();
+        // Delete the spool file so the tile-data copy fails after the temp
+        // output has been created and the directories written into it.
+        fs::remove_file(&spool.path).unwrap();
+
+        let result = write_pmtiles_from_spool(
+            out.to_str().unwrap(),
+            &mut spool,
+            TileFormat::Mvt,
+            &test_layers(),
+            0,
+            0,
+            (0.0, 0.0, 1.0, 1.0),
+        );
+        assert!(result.is_err());
+        assert_eq!(fs::read(&out).unwrap(), b"PRECIOUS");
+
+        // The failed temp output must not be left behind.
+        let leftovers: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .filter(|n| n != "out.pmtiles")
+            .collect();
+        assert!(leftovers.is_empty(), "leftover files: {:?}", leftovers);
+
+        fs::remove_file(&out).unwrap();
+        fs::remove_dir(&dir).unwrap();
     }
 
     #[test]
