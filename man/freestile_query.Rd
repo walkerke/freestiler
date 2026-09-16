@@ -89,6 +89,17 @@ string (for example \code{"EPSG:4267"}) to have DuckDB reproject to WGS84 before
 tiling. For file-based input where the CRS is embedded in the file, use
 \code{\link[=freestile_file]{freestile_file()}} with \code{engine = "duckdb"} instead, which auto-detects the
 source CRS.
+
+The streaming pipeline partitions the query result on disk and tiles each
+partition independently, so memory use stays bounded regardless of input
+size. Bulk temporary data lives in a private per-run directory (under the
+system temp directory, or \code{FREESTILER_TEMP_DIR} if set) and is removed
+when the run ends; plan for temporary disk space of roughly the input's
+size plus the output archive. \code{FREESTILER_DUCKDB_MEMORY} (e.g. \code{"16GB"})
+caps DuckDB's memory, and \code{FREESTILER_STREAM_WORKERS} sets how many
+partitions are tiled concurrently (default 1). With \code{drop_rate}, point
+thinning is computed per partition: per-zoom density matches earlier
+releases but the exact set of retained points can differ.
 }
 \examples{
 \dontrun{

@@ -52,9 +52,14 @@ pub struct TileSpool {
 
 impl TileSpool {
     pub fn new() -> Result<Self, String> {
-        // Owner-only permissions: the spool lives in the shared temp
+        Self::new_in(&std::env::temp_dir())
+    }
+
+    /// Create the spool inside `dir` (e.g. a private per-run directory).
+    pub fn new_in(dir: &Path) -> Result<Self, String> {
+        // Owner-only permissions: the spool may live in a shared temp
         // directory and holds the full tile data.
-        let (file, path) = create_exclusive_temp(&std::env::temp_dir(), "freestiler_tiles", true)?;
+        let (file, path) = create_exclusive_temp(dir, "freestiler_tiles", true)?;
         Ok(Self {
             path,
             file: BufWriter::new(file),

@@ -23,7 +23,7 @@ pub enum Geometry {
 }
 
 /// Property value types
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PropertyValue {
     String(String),
     Int(i64),
