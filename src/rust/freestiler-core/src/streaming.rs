@@ -172,16 +172,24 @@ pub fn generate_pmtiles_from_duckdb_query(
             }
         }
     } else {
-        process_units_parallel(&ctx, &units, workers, &spool, &buckets, &encoded_per_zoom)?;
+        process_units_parallel(
+            &ctx,
+            &units,
+            workers,
+            &spool,
+            &buckets,
+            &encoded_per_zoom,
+            reporter,
+        )?;
     }
 
     // --- Encode cross-unit bucket tiles ---
+    reporter.report("  Assembling cross-partition tiles ...");
     {
         let mut store = buckets.lock().unwrap();
-        let mut sp = spool.lock().unwrap();
         let mut counts = encoded_per_zoom.lock().unwrap();
         store.finalize(
-            &mut sp,
+            &spool,
             &mut counts,
             &layer_meta,
             &prepared.prop_names,
@@ -619,18 +627,22 @@ fn process_unit(
                 };
                 if current != Some(coord) {
                     if let Some(prev) = current {
-                        if !feats.is_empty() {
-                            let mut sp = spool.lock().unwrap();
-                            write_tile(
-                                &mut sp,
-                                prev,
-                                ctx.layer_meta,
-                                &ctx.prepared.prop_names,
-                                &mut feats,
-                                config,
-                            )?;
+                        // Encode and compress OUTSIDE the spool lock; only
+                        // the short append is serialized across workers.
+                        if let Some(compressed) = encode_tile_compressed(
+                            prev,
+                            ctx.layer_meta,
+                            &ctx.prepared.prop_names,
+                            &mut feats,
+                            config,
+                        )? {
+                            spool
+                                .lock()
+                                .unwrap()
+                                .write_compressed_tile(prev, &compressed)?;
                             encoded += 1;
                         }
+                        feats.clear();
                     }
                     current = Some(coord);
                     feat_bytes = 0;
@@ -654,16 +666,17 @@ fn process_unit(
                 });
             }
             if let Some(prev) = current {
-                if !feats.is_empty() {
-                    let mut sp = spool.lock().unwrap();
-                    write_tile(
-                        &mut sp,
-                        prev,
-                        ctx.layer_meta,
-                        &ctx.prepared.prop_names,
-                        &mut feats,
-                        config,
-                    )?;
+                if let Some(compressed) = encode_tile_compressed(
+                    prev,
+                    ctx.layer_meta,
+                    &ctx.prepared.prop_names,
+                    &mut feats,
+                    config,
+                )? {
+                    spool
+                        .lock()
+                        .unwrap()
+                        .write_compressed_tile(prev, &compressed)?;
                     encoded += 1;
                 }
             }
@@ -674,12 +687,16 @@ fn process_unit(
             // Bucket zoom: tiles wider than this unit's cell. The tile is
             // the unit cell's ancestor at this zoom — derived by bit shift,
             // not float math, so it can never land in a neighboring cell.
+            // Records serialize straight from UnitRow (no Feature clone)
+            // into a local buffer; the store lock is taken once per zoom.
             let shift = unit.z - zoom;
             let coord = TileCoord {
                 z: zoom,
                 x: unit.x >> shift,
                 y: unit.y >> shift,
             };
+            let mut buf = Vec::new();
+            let mut decoded_sum: u64 = 0;
             for (i, r) in unit_rows.iter().enumerate() {
                 let rank = i as u64 + 1;
                 if let Some(retain) = retain {
@@ -687,12 +704,21 @@ fn process_unit(
                         continue;
                     }
                 }
-                let feature = Feature {
-                    id: Some(r.id),
-                    geometry: Geometry::Point(geo_types::Point::new(r.lon, r.lat)),
-                    properties: r.props.clone(),
-                };
-                buckets.lock().unwrap().append(coord, &feature)?;
+                encode_bucket_record_parts(&mut buf, r.id, r.lon, r.lat, &r.props);
+                decoded_sum += 128
+                    + r.props
+                        .iter()
+                        .map(|p| match p {
+                            PropertyValue::String(s) => 32 + s.len() as u64,
+                            _ => 32,
+                        })
+                        .sum::<u64>();
+            }
+            if !buf.is_empty() {
+                buckets
+                    .lock()
+                    .unwrap()
+                    .append_batch(coord, buf, decoded_sum)?;
             }
         }
     }
@@ -707,7 +733,12 @@ fn process_units_parallel(
     spool: &Arc<Mutex<TileSpool>>,
     buckets: &Arc<Mutex<BucketStore>>,
     encoded_per_zoom: &Arc<Mutex<HashMap<u8, u64>>>,
+    reporter: &dyn ProgressReporter,
 ) -> Result<(), String> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let total = units.len();
+    let done = AtomicUsize::new(0);
+    let done = &done;
     let queue = Arc::new(Mutex::new(units.to_vec()));
     let error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     std::thread::scope(|scope| {
@@ -746,6 +777,10 @@ fn process_units_parallel(
                     if let Err(e) = process_unit(&conn, ctx, &unit, &spool, &buckets, &encoded) {
                         *error.lock().unwrap() = Some(e);
                         return;
+                    }
+                    let n = done.fetch_add(1, Ordering::Relaxed) + 1;
+                    if n % 50 == 0 {
+                        reporter.report(&format!("  Partitions: {}/{}", n, total));
                     }
                 }
             });
@@ -804,9 +839,6 @@ impl BucketStore {
     }
 
     fn append(&mut self, coord: TileCoord, feature: &Feature) -> Result<(), String> {
-        // Track the DECODED feature cost per tile (same accounting as the
-        // direct path), so finalize can enforce the tile budget on what the
-        // encoder will actually hold, not on the smaller serialized bytes.
         let decoded: u64 = 128
             + feature
                 .properties
@@ -816,12 +848,31 @@ impl BucketStore {
                     _ => 32,
                 })
                 .sum::<u64>();
-        *self.decoded_est.entry(coord).or_insert(0) += decoded;
+        let mut buf = Vec::new();
+        encode_bucket_record(&mut buf, feature);
+        self.append_batch(coord, buf, decoded)
+    }
 
+    /// Append pre-serialized records for one tile in a single lock hold.
+    /// `decoded` is the DECODED feature cost of the batch (same accounting
+    /// as the direct path), so finalize can enforce the tile budget on what
+    /// the encoder will actually hold, not on the smaller serialized bytes.
+    fn append_batch(
+        &mut self,
+        coord: TileCoord,
+        data: Vec<u8>,
+        decoded: u64,
+    ) -> Result<(), String> {
+        *self.decoded_est.entry(coord).or_insert(0) += decoded;
         let buf = self.buffers.entry(coord).or_default();
-        let before = buf.len();
-        encode_bucket_record(buf, feature);
-        self.buffered_bytes += buf.len() - before;
+        if buf.is_empty() {
+            let len = data.len();
+            *buf = data;
+            self.buffered_bytes += len;
+        } else {
+            buf.extend_from_slice(&data);
+            self.buffered_bytes += data.len();
+        }
         if self.buffered_bytes > self.buffer_budget {
             self.flush_largest()?;
         }
@@ -850,13 +901,15 @@ impl BucketStore {
 
     fn finalize(
         &mut self,
-        spool: &mut TileSpool,
+        spool: &Mutex<TileSpool>,
         encoded_per_zoom: &mut HashMap<u8, u64>,
         layer_meta: &LayerMeta,
         prop_names: &[String],
         config: &TileConfig,
         tile_budget: u64,
     ) -> Result<(), String> {
+        use rayon::prelude::*;
+
         let mut coords: Vec<TileCoord> = self
             .buffers
             .keys()
@@ -867,49 +920,85 @@ impl BucketStore {
             .collect();
         coords.sort_by_key(|c| (c.z, c.x, c.y));
 
-        for coord in coords {
-            let mem = self.buffers.remove(&coord).unwrap_or_default();
-            let file_len = self.file_bytes.remove(&coord).unwrap_or(0);
-            let decoded = self.decoded_est.remove(&coord).unwrap_or(0);
-            // Check the decoded feature cost (what the encoder will hold),
-            // before reading anything back.
+        // Budget-check everything on decoded cost before any read-back.
+        for coord in &coords {
+            let decoded = self.decoded_est.get(coord).copied().unwrap_or(0);
             if decoded > tile_budget {
-                return Err(tile_budget_error(coord, decoded, tile_budget));
+                return Err(tile_budget_error(*coord, decoded, tile_budget));
             }
-            let total = mem.len() as u64 + file_len;
-            let mut data = Vec::with_capacity(total as usize);
-            if file_len > 0 {
-                let path = self.bucket_path(coord);
-                fs::File::open(&path)
-                    .and_then(|mut f| f.read_to_end(&mut data))
-                    .map_err(|e| format!("Cannot read bucket {}: {}", path.display(), e))?;
-                let _ = fs::remove_file(&path);
-            }
-            data.extend_from_slice(&mem);
-            drop(mem);
+        }
 
-            let mut feats = decode_bucket_records(&data, coord)?;
-            drop(data);
-            if feats.is_empty() {
-                continue;
+        // Decode + encode tiles in parallel, a bounded chunk at a time so
+        // in-flight decoded tiles stay limited; spool appends are serial.
+        let chunk_size = rayon::current_num_threads().max(4);
+        for chunk in coords.chunks(chunk_size) {
+            let inputs: Vec<(TileCoord, Vec<u8>)> = chunk
+                .iter()
+                .map(|&coord| {
+                    let mem = self.buffers.remove(&coord).unwrap_or_default();
+                    let file_len = self.file_bytes.remove(&coord).unwrap_or(0);
+                    let mut data = Vec::with_capacity(mem.len() + file_len as usize);
+                    if file_len > 0 {
+                        let path = self.bucket_path(coord);
+                        fs::File::open(&path)
+                            .and_then(|mut f| f.read_to_end(&mut data))
+                            .map_err(|e| format!("Cannot read bucket {}: {}", path.display(), e))?;
+                        let _ = fs::remove_file(&path);
+                    }
+                    data.extend_from_slice(&mem);
+                    Ok((coord, data))
+                })
+                .collect::<Result<_, String>>()?;
+
+            let encoded: Vec<(TileCoord, Option<Vec<u8>>)> = inputs
+                .into_par_iter()
+                .map(|(coord, data)| {
+                    let mut feats = decode_bucket_records(&data, coord)?;
+                    drop(data);
+                    if feats.is_empty() {
+                        return Ok((coord, None));
+                    }
+                    let compressed =
+                        encode_tile_compressed(coord, layer_meta, prop_names, &mut feats, config)?;
+                    Ok((coord, compressed))
+                })
+                .collect::<Result<_, String>>()?;
+
+            for (coord, compressed) in encoded {
+                if let Some(compressed) = compressed {
+                    spool
+                        .lock()
+                        .unwrap()
+                        .write_compressed_tile(coord, &compressed)?;
+                    *encoded_per_zoom.entry(coord.z).or_insert(0) += 1;
+                }
             }
-            write_tile(spool, coord, layer_meta, prop_names, &mut feats, config)?;
-            *encoded_per_zoom.entry(coord.z).or_insert(0) += 1;
         }
         Ok(())
     }
 }
 
 fn encode_bucket_record(buf: &mut Vec<u8>, feature: &Feature) {
-    buf.extend_from_slice(&feature.id.unwrap_or(0).to_le_bytes());
     let (lon, lat) = match &feature.geometry {
         Geometry::Point(p) => (p.x(), p.y()),
         _ => (0.0, 0.0),
     };
+    encode_bucket_record_parts(buf, feature.id.unwrap_or(0), lon, lat, &feature.properties);
+}
+
+/// Serialize one bucket record straight from its parts — no Feature clone.
+fn encode_bucket_record_parts(
+    buf: &mut Vec<u8>,
+    id: u64,
+    lon: f64,
+    lat: f64,
+    properties: &[PropertyValue],
+) {
+    buf.extend_from_slice(&id.to_le_bytes());
     buf.extend_from_slice(&lon.to_le_bytes());
     buf.extend_from_slice(&lat.to_le_bytes());
-    buf.extend_from_slice(&(feature.properties.len() as u16).to_le_bytes());
-    for prop in &feature.properties {
+    buf.extend_from_slice(&(properties.len() as u16).to_le_bytes());
+    for prop in properties {
         match prop {
             PropertyValue::Null => buf.push(0),
             PropertyValue::String(s) => {
@@ -1081,16 +1170,18 @@ impl PreparedPointQuery {
 // Tile encode + shared helpers (unchanged)
 // ---------------------------------------------------------------------------
 
-fn write_tile(
-    spool: &mut TileSpool,
+/// Sort, optionally coalesce, encode, and gzip one tile. Touches no shared
+/// state, so it runs outside the spool lock and in parallel. Returns None
+/// when the tile encodes to nothing.
+fn encode_tile_compressed(
     coord: TileCoord,
     layer_meta: &LayerMeta,
     prop_names: &[String],
     tile_features: &mut Vec<Feature>,
     config: &TileConfig,
-) -> Result<(), String> {
+) -> Result<Option<Vec<u8>>, String> {
     if tile_features.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
 
     if tile_features.len() > 1 {
@@ -1112,7 +1203,7 @@ fn write_tile(
     }
 
     if tile_features.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
 
     let layer_refs = [(
@@ -1128,10 +1219,10 @@ fn write_tile(
     tile_features.clear();
 
     if tile_bytes.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
 
-    spool.write_tile(coord, &tile_bytes)
+    Ok(Some(pmtiles_writer::gzip_compress(&tile_bytes)?))
 }
 
 fn open_connection(db_path: Option<&str>) -> Result<Connection, String> {
