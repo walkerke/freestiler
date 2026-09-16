@@ -11,9 +11,10 @@
   `FREESTILER_TEMP_DIR` (where bulk temporary data goes),
   `FREESTILER_DUCKDB_MEMORY`, and `FREESTILER_STREAM_WORKERS`.
 * With `drop_rate`, streaming point thinning is now computed per partition:
-  the per-zoom density is unchanged, but the exact points retained near
-  partition boundaries can differ from earlier releases. Without `drop_rate`
-  output is unchanged.
+  the per-zoom density is unchanged, but the exact set of retained points can
+  differ from earlier releases (the sampling phase restarts per partition, so
+  membership shifts are not limited to partition boundaries). Without
+  `drop_rate` output is unchanged.
 * Tile generation now uses dramatically less memory on large inputs. Encoded
   tiles are compressed and spooled to a temporary file as they are produced
   instead of being accumulated in RAM across all zoom levels, and the PMTiles

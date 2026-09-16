@@ -588,7 +588,7 @@ freestile_file <- function(
 #' caps DuckDB's memory, and `FREESTILER_STREAM_WORKERS` sets how many
 #' partitions are tiled concurrently (default 1). With `drop_rate`, point
 #' thinning is computed per partition: per-zoom density matches earlier
-#' releases but exact point membership near partition boundaries can differ.
+#' releases but the exact set of retained points can differ.
 #'
 #' @return The output file path (invisibly).
 #'

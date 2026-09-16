@@ -99,7 +99,7 @@ size plus the output archive. \code{FREESTILER_DUCKDB_MEMORY} (e.g. \code{"16GB"
 caps DuckDB's memory, and \code{FREESTILER_STREAM_WORKERS} sets how many
 partitions are tiled concurrently (default 1). With \code{drop_rate}, point
 thinning is computed per partition: per-zoom density matches earlier
-releases but exact point membership near partition boundaries can differ.
+releases but the exact set of retained points can differ.
 }
 \examples{
 \dontrun{

@@ -31,6 +31,11 @@ const DECODED_PER_PARQUET_BYTE: u64 = 12;
 const DEFAULT_UNIT_DECODED_BUDGET_MB: u64 = 6_144;
 const DEFAULT_TILE_BUDGET_MB: u64 = 2_048;
 const DEFAULT_BUCKET_BUFFER_MB: u64 = 256;
+/// Aggregate decoded bytes allowed in flight during parallel bucket-tile
+/// finalization, and the size at which a worker's local bucket batch is
+/// handed to the shared store.
+const DEFAULT_FINALIZE_BUDGET_MB: u64 = 4_096;
+const LOCAL_BUCKET_BATCH_BYTES: usize = 32 * 1024 * 1024;
 
 pub fn auto_threshold() -> u64 {
     STREAMING_AUTO_THRESHOLD
@@ -713,6 +718,16 @@ fn process_unit(
                             _ => 32,
                         })
                         .sum::<u64>();
+                // Hand the batch over before the worker-local buffer grows
+                // past its bound, so per-worker memory stays capped too.
+                if buf.len() >= LOCAL_BUCKET_BATCH_BYTES {
+                    buckets.lock().unwrap().append_batch(
+                        coord,
+                        std::mem::take(&mut buf),
+                        decoded_sum,
+                    )?;
+                    decoded_sum = 0;
+                }
             }
             if !buf.is_empty() {
                 buckets
@@ -928,10 +943,28 @@ impl BucketStore {
             }
         }
 
-        // Decode + encode tiles in parallel, a bounded chunk at a time so
-        // in-flight decoded tiles stay limited; spool appends are serial.
-        let chunk_size = rayon::current_num_threads().max(4);
-        for chunk in coords.chunks(chunk_size) {
+        // Decode + encode tiles in parallel, batched by AGGREGATE decoded
+        // bytes (not tile count): several individually-legal tiles must not
+        // decode concurrently past the finalize budget. Spool appends serial.
+        let finalize_budget =
+            env_u64("FREESTILER_FINALIZE_BUDGET_MB", DEFAULT_FINALIZE_BUDGET_MB) * 1024 * 1024;
+        let mut batches: Vec<Vec<TileCoord>> = Vec::new();
+        let mut batch: Vec<TileCoord> = Vec::new();
+        let mut batch_bytes: u64 = 0;
+        for coord in coords {
+            let decoded = self.decoded_est.get(&coord).copied().unwrap_or(0);
+            if !batch.is_empty() && batch_bytes + decoded > finalize_budget {
+                batches.push(std::mem::take(&mut batch));
+                batch_bytes = 0;
+            }
+            batch.push(coord);
+            batch_bytes += decoded;
+        }
+        if !batch.is_empty() {
+            batches.push(batch);
+        }
+
+        for chunk in &batches {
             let inputs: Vec<(TileCoord, Vec<u8>)> = chunk
                 .iter()
                 .map(|&coord| {

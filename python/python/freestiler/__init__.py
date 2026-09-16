@@ -572,8 +572,8 @@ def freestile_query(
     output archive. ``FREESTILER_DUCKDB_MEMORY`` caps DuckDB memory and
     ``FREESTILER_STREAM_WORKERS`` sets partition concurrency (default 1).
     With ``drop_rate``, thinning is computed per partition: per-zoom
-    density matches earlier releases, but exact membership near partition
-    boundaries can differ.
+    density matches earlier releases, but the exact set of retained
+    points can differ.
     """
     if tile_format not in ("mlt", "mvt"):
         raise ValueError(f"tile_format must be 'mlt' or 'mvt', got '{tile_format}'")
