@@ -671,7 +671,15 @@ fn process_unit(
                 *encoded_per_zoom.lock().unwrap().entry(zoom).or_insert(0) += encoded;
             }
         } else {
-            // Bucket zoom: tiles wider than this unit's cell.
+            // Bucket zoom: tiles wider than this unit's cell. The tile is
+            // the unit cell's ancestor at this zoom — derived by bit shift,
+            // not float math, so it can never land in a neighboring cell.
+            let shift = unit.z - zoom;
+            let coord = TileCoord {
+                z: zoom,
+                x: unit.x >> shift,
+                y: unit.y >> shift,
+            };
             for (i, r) in unit_rows.iter().enumerate() {
                 let rank = i as u64 + 1;
                 if let Some(retain) = retain {
@@ -679,16 +687,12 @@ fn process_unit(
                         continue;
                     }
                 }
-                let (x, y) = tile_coord_for(r.lon, r.lat, zoom);
                 let feature = Feature {
                     id: Some(r.id),
                     geometry: Geometry::Point(geo_types::Point::new(r.lon, r.lat)),
                     properties: r.props.clone(),
                 };
-                buckets
-                    .lock()
-                    .unwrap()
-                    .append(TileCoord { z: zoom, x, y }, &feature)?;
+                buckets.lock().unwrap().append(coord, &feature)?;
             }
         }
     }
@@ -727,6 +731,10 @@ fn process_units_parallel(
                     "SET temp_directory = {}",
                     quote_string(&ctx.duck_tmp.to_string_lossy())
                 ));
+                if let Ok(mem) = std::env::var("FREESTILER_DUCKDB_MEMORY") {
+                    let _ =
+                        conn.execute_batch(&format!("SET memory_limit = {}", quote_string(&mem)));
+                }
                 loop {
                     if error.lock().unwrap().is_some() {
                         return;
@@ -772,6 +780,8 @@ struct BucketStore {
     buffered_bytes: usize,
     buffer_budget: usize,
     file_bytes: HashMap<TileCoord, u64>,
+    /// Decoded (Feature) byte estimate per tile, accumulated at append time.
+    decoded_est: HashMap<TileCoord, u64>,
 }
 
 impl BucketStore {
@@ -784,6 +794,7 @@ impl BucketStore {
             buffered_bytes: 0,
             buffer_budget: buffer_budget as usize,
             file_bytes: HashMap::new(),
+            decoded_est: HashMap::new(),
         })
     }
 
@@ -793,6 +804,20 @@ impl BucketStore {
     }
 
     fn append(&mut self, coord: TileCoord, feature: &Feature) -> Result<(), String> {
+        // Track the DECODED feature cost per tile (same accounting as the
+        // direct path), so finalize can enforce the tile budget on what the
+        // encoder will actually hold, not on the smaller serialized bytes.
+        let decoded: u64 = 128
+            + feature
+                .properties
+                .iter()
+                .map(|p| match p {
+                    PropertyValue::String(s) => 32 + s.len() as u64,
+                    _ => 32,
+                })
+                .sum::<u64>();
+        *self.decoded_est.entry(coord).or_insert(0) += decoded;
+
         let buf = self.buffers.entry(coord).or_default();
         let before = buf.len();
         encode_bucket_record(buf, feature);
@@ -845,10 +870,13 @@ impl BucketStore {
         for coord in coords {
             let mem = self.buffers.remove(&coord).unwrap_or_default();
             let file_len = self.file_bytes.remove(&coord).unwrap_or(0);
-            let total = mem.len() as u64 + file_len;
-            if total > tile_budget {
-                return Err(tile_budget_error(coord, total, tile_budget));
+            let decoded = self.decoded_est.remove(&coord).unwrap_or(0);
+            // Check the decoded feature cost (what the encoder will hold),
+            // before reading anything back.
+            if decoded > tile_budget {
+                return Err(tile_budget_error(coord, decoded, tile_budget));
             }
+            let total = mem.len() as u64 + file_len;
             let mut data = Vec::with_capacity(total as usize);
             if file_len > 0 {
                 let path = self.bucket_path(coord);
