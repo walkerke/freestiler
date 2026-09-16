@@ -161,6 +161,7 @@ pub fn generate_pmtiles_from_duckdb_query(
         layer_meta: &layer_meta,
         config,
         tile_budget,
+        unit_decoded_budget,
     };
 
     if workers <= 1 {
@@ -469,44 +470,45 @@ struct UnitContext<'a> {
     layer_meta: &'a LayerMeta,
     config: &'a TileConfig,
     tile_budget: u64,
+    unit_decoded_budget: u64,
 }
 
-fn unit_zoom_query(
-    prepared: &PreparedPointQuery,
-    unit: &PartitionUnit,
-    zoom: u8,
-    retain: Option<u64>,
-    n_local: u64,
-    ordered: bool,
-) -> String {
-    let prop_select = prepared.prop_select();
-    let n = 1u64 << zoom;
-    let max_idx = n - 1;
-    let clamped = "LEAST(GREATEST(__lat, -85.05112878), 85.05112878)";
-    let keep = retain.map_or_else(String::new, |retain| {
-        format!(
-            " WHERE (((CAST(__rank AS UBIGINT) * {retain}) // {n_local}) \
-               > (((CAST(__rank AS UBIGINT) - 1) * {retain}) // {n_local}))"
-        )
-    });
-    let order = if ordered {
-        " ORDER BY __tile_x, __tile_y, __rank"
-    } else {
-        ""
-    };
+/// One morton-ordered fetch per unit; row position IS the thinning rank, so
+/// no window function and no per-zoom re-query or re-sort.
+fn unit_fetch_query(prepared: &PreparedPointQuery, unit: &PartitionUnit) -> String {
     format!(
-        "SELECT __tile_x, __tile_y, __lon, __lat, __src_rowid{prop_select} FROM (
-           SELECT *,
-             CAST(LEAST(GREATEST(FLOOR(((__lon + 180.0) / 360.0) * {n}), 0), {max_idx}) AS UINTEGER) AS __tile_x,
-             CAST(LEAST(GREATEST(FLOOR(((1.0 - ASINH(TAN(RADIANS({clamped}))) / PI()) / 2.0) * {n}), 0), {max_idx}) AS UINTEGER) AS __tile_y,
-             ROW_NUMBER() OVER (ORDER BY __morton, __src_rowid) AS __rank
-           FROM read_parquet({glob}, hive_partitioning = false)
-         ){keep}{order}",
-        glob = quote_string(&unit_glob(&unit.dir)),
+        "SELECT __lon, __lat, __src_rowid{} FROM read_parquet({}, hive_partitioning = false) \
+         ORDER BY __morton, __src_rowid",
+        prepared.prop_select(),
+        quote_string(&unit_glob(&unit.dir)),
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Mirror of the SQL tile-coordinate math used at materialization time.
+fn tile_coord_for(lon: f64, lat: f64, zoom: u8) -> (u32, u32) {
+    let n = (1u64 << zoom) as f64;
+    let max_idx = ((1u64 << zoom) - 1) as f64;
+    let x = ((lon + 180.0) / 360.0 * n).floor().clamp(0.0, max_idx) as u32;
+    let clamped = lat.clamp(-85.05112878, 85.05112878);
+    let y = ((1.0 - clamped.to_radians().tan().asinh() / std::f64::consts::PI) / 2.0 * n)
+        .floor()
+        .clamp(0.0, max_idx) as u32;
+    (x, y)
+}
+
+/// The Bresenham keep test used by the SQL thinning predicate, over the
+/// 1-based morton rank. rank, retain <= unit rows (8M default): no overflow.
+fn rank_kept(rank: u64, retain: u64, n: u64) -> bool {
+    (rank * retain) / n > ((rank - 1) * retain) / n
+}
+
+struct UnitRow {
+    lon: f64,
+    lat: f64,
+    id: u64,
+    props: Vec<PropertyValue>,
+}
+
 fn process_unit(
     conn: &Connection,
     ctx: &UnitContext,
@@ -518,85 +520,175 @@ fn process_unit(
     let config = ctx.config;
     let base_zoom = config.base_zoom.unwrap_or(config.max_zoom);
 
-    // Direct zooms: tiles nest inside this unit's cell.
-    let direct_from = unit.z.max(config.min_zoom);
-    for zoom in direct_from..=config.max_zoom {
-        if zoom < unit.z {
-            continue;
-        }
-        let retain = retain_count_for_zoom(unit.rows, zoom, base_zoom, config.drop_rate);
-        let sql = unit_zoom_query(ctx.prepared, unit, zoom, retain, unit.rows, true);
-        let mut stmt = conn
-            .prepare(&sql)
-            .map_err(|e| format!("Cannot prepare unit zoom {} query: {}", zoom, e))?;
-        let mut rows = stmt
-            .query(params![])
-            .map_err(|e| format!("Cannot execute unit zoom {} query: {}", zoom, e))?;
+    // One morton-ordered fetch; every zoom is then processed in Rust.
+    let sql = unit_fetch_query(ctx.prepared, unit);
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|e| format!("Cannot prepare unit query: {}", e))?;
+    let mut result = stmt
+        .query(params![])
+        .map_err(|e| format!("Cannot execute unit query: {}", e))?;
 
-        let mut current: Option<TileCoord> = None;
-        let mut feats: Vec<Feature> = Vec::new();
-        let mut feat_bytes: u64 = 0;
-        let mut encoded = 0u64;
-        while let Some(row) = rows.next().map_err(|e| format!("Row error: {}", e))? {
-            let (coord, feature, bytes) = read_feature_row(row, ctx.prepared, zoom)?;
-            if current != Some(coord) {
-                if let Some(prev) = current {
-                    if !feats.is_empty() {
-                        let mut sp = spool.lock().unwrap();
-                        write_tile(
-                            &mut sp,
-                            prev,
-                            ctx.layer_meta,
-                            &ctx.prepared.prop_names,
-                            &mut feats,
-                            config,
-                        )?;
-                        encoded += 1;
-                    }
-                }
-                current = Some(coord);
-                feat_bytes = 0;
-            }
-            feat_bytes += bytes;
-            if feat_bytes > ctx.tile_budget {
-                return Err(tile_budget_error(coord, feat_bytes, ctx.tile_budget));
-            }
-            feats.push(feature);
+    let mut unit_rows: Vec<UnitRow> = Vec::new();
+    let mut decoded_bytes: u64 = 0;
+    while let Some(row) = result.next().map_err(|e| format!("Row error: {}", e))? {
+        let lon: f64 = row
+            .get(0)
+            .map_err(|e| format!("Longitude read error: {}", e))?;
+        let lat: f64 = row
+            .get(1)
+            .map_err(|e| format!("Latitude read error: {}", e))?;
+        let id: i64 = row
+            .get(2)
+            .map_err(|e| format!("Row id read error: {}", e))?;
+        let mut props = Vec::with_capacity(ctx.prepared.prop_names.len());
+        for (col_idx, kind) in ctx.prepared.prop_value_kinds.iter().enumerate() {
+            let value = extract_value(row, 3 + col_idx, *kind);
+            decoded_bytes += 32
+                + match &value {
+                    PropertyValue::String(s) => s.len() as u64,
+                    _ => 0,
+                };
+            props.push(value);
         }
-        if let Some(prev) = current {
-            if !feats.is_empty() {
-                let mut sp = spool.lock().unwrap();
-                write_tile(
-                    &mut sp,
-                    prev,
-                    ctx.layer_meta,
-                    &ctx.prepared.prop_names,
-                    &mut feats,
-                    config,
-                )?;
-                encoded += 1;
-            }
+        decoded_bytes += 32;
+        if decoded_bytes > ctx.unit_decoded_budget {
+            return Err(format!(
+                "Partition unit z{}/{}/{} exceeds the decoded memory budget ({} MB). \
+                 Raise FREESTILER_UNIT_BUDGET_MB or reduce property width in the query.",
+                unit.z,
+                unit.x,
+                unit.y,
+                ctx.unit_decoded_budget / 1_048_576
+            ));
         }
-        if encoded > 0 {
-            *encoded_per_zoom.lock().unwrap().entry(zoom).or_insert(0) += encoded;
-        }
+        unit_rows.push(UnitRow {
+            lon,
+            lat,
+            id: id as u64,
+            props,
+        });
+    }
+    drop(result);
+    drop(stmt);
+
+    let n = unit_rows.len() as u64;
+    if n == 0 {
+        return Ok(());
     }
 
-    // Bucket zooms: tiles wider than this unit's cell (cross-unit assembly).
-    if config.min_zoom < unit.z {
-        let bucket_to = (unit.z - 1).min(config.max_zoom);
-        for zoom in config.min_zoom..=bucket_to {
-            let retain = retain_count_for_zoom(unit.rows, zoom, base_zoom, config.drop_rate);
-            let sql = unit_zoom_query(ctx.prepared, unit, zoom, retain, unit.rows, false);
-            let mut stmt = conn
-                .prepare(&sql)
-                .map_err(|e| format!("Cannot prepare bucket zoom {} query: {}", zoom, e))?;
-            let mut rows = stmt
-                .query(params![])
-                .map_err(|e| format!("Cannot execute bucket zoom {} query: {}", zoom, e))?;
-            while let Some(row) = rows.next().map_err(|e| format!("Row error: {}", e))? {
-                let (coord, feature, _bytes) = read_feature_row(row, ctx.prepared, zoom)?;
-                buckets.lock().unwrap().append(coord, &feature)?;
+    for zoom in config.min_zoom..=config.max_zoom {
+        let retain = retain_count_for_zoom(n, zoom, base_zoom, config.drop_rate);
+        let direct = zoom >= unit.z;
+
+        if direct {
+            // Tiles this unit emits must nest inside its cell; clamp guards
+            // against last-ulp float disagreement with the SQL partition
+            // math so the exactly-once tile invariant is structural.
+            let shift = zoom - unit.z;
+            let (x_min, y_min) = ((unit.x as u64) << shift, (unit.y as u64) << shift);
+            let (x_max, y_max) = (
+                (((unit.x as u64) + 1) << shift) - 1,
+                (((unit.y as u64) + 1) << shift) - 1,
+            );
+            // (tile key, row index): index ascending == morton-rank order.
+            let mut keyed: Vec<(u64, u32)> = Vec::new();
+            for (i, r) in unit_rows.iter().enumerate() {
+                let rank = i as u64 + 1;
+                if let Some(retain) = retain {
+                    if !rank_kept(rank, retain, n) {
+                        continue;
+                    }
+                }
+                let (x, y) = tile_coord_for(r.lon, r.lat, zoom);
+                let x = (x as u64).clamp(x_min, x_max);
+                let y = (y as u64).clamp(y_min, y_max);
+                keyed.push(((x << 32) | y, i as u32));
+            }
+            keyed.sort_unstable();
+
+            let mut current: Option<TileCoord> = None;
+            let mut feats: Vec<Feature> = Vec::new();
+            let mut feat_bytes: u64 = 0;
+            let mut encoded = 0u64;
+            for (key, idx) in keyed {
+                let coord = TileCoord {
+                    z: zoom,
+                    x: (key >> 32) as u32,
+                    y: (key & 0xFFFF_FFFF) as u32,
+                };
+                if current != Some(coord) {
+                    if let Some(prev) = current {
+                        if !feats.is_empty() {
+                            let mut sp = spool.lock().unwrap();
+                            write_tile(
+                                &mut sp,
+                                prev,
+                                ctx.layer_meta,
+                                &ctx.prepared.prop_names,
+                                &mut feats,
+                                config,
+                            )?;
+                            encoded += 1;
+                        }
+                    }
+                    current = Some(coord);
+                    feat_bytes = 0;
+                }
+                let r = &unit_rows[idx as usize];
+                feat_bytes += 128
+                    + r.props
+                        .iter()
+                        .map(|p| match p {
+                            PropertyValue::String(s) => 32 + s.len() as u64,
+                            _ => 32,
+                        })
+                        .sum::<u64>();
+                if feat_bytes > ctx.tile_budget {
+                    return Err(tile_budget_error(coord, feat_bytes, ctx.tile_budget));
+                }
+                feats.push(Feature {
+                    id: Some(r.id),
+                    geometry: Geometry::Point(geo_types::Point::new(r.lon, r.lat)),
+                    properties: r.props.clone(),
+                });
+            }
+            if let Some(prev) = current {
+                if !feats.is_empty() {
+                    let mut sp = spool.lock().unwrap();
+                    write_tile(
+                        &mut sp,
+                        prev,
+                        ctx.layer_meta,
+                        &ctx.prepared.prop_names,
+                        &mut feats,
+                        config,
+                    )?;
+                    encoded += 1;
+                }
+            }
+            if encoded > 0 {
+                *encoded_per_zoom.lock().unwrap().entry(zoom).or_insert(0) += encoded;
+            }
+        } else {
+            // Bucket zoom: tiles wider than this unit's cell.
+            for (i, r) in unit_rows.iter().enumerate() {
+                let rank = i as u64 + 1;
+                if let Some(retain) = retain {
+                    if !rank_kept(rank, retain, n) {
+                        continue;
+                    }
+                }
+                let (x, y) = tile_coord_for(r.lon, r.lat, zoom);
+                let feature = Feature {
+                    id: Some(r.id),
+                    geometry: Geometry::Point(geo_types::Point::new(r.lon, r.lat)),
+                    properties: r.props.clone(),
+                };
+                buckets
+                    .lock()
+                    .unwrap()
+                    .append(TileCoord { z: zoom, x, y }, &feature)?;
             }
         }
     }
@@ -668,51 +760,6 @@ fn tile_budget_error(coord: TileCoord, bytes: u64, budget: u64) -> String {
         bytes / 1_048_576,
         budget / 1_048_576
     )
-}
-
-/// Read one result row (tile_x, tile_y, lon, lat, src_rowid, props...) into a
-/// Feature, returning the tile coord and an approximate decoded byte cost.
-fn read_feature_row(
-    row: &duckdb::Row,
-    prepared: &PreparedPointQuery,
-    zoom: u8,
-) -> Result<(TileCoord, Feature, u64), String> {
-    let x: u32 = row
-        .get(0)
-        .map_err(|e| format!("Tile x read error: {}", e))?;
-    let y: u32 = row
-        .get(1)
-        .map_err(|e| format!("Tile y read error: {}", e))?;
-    let lon: f64 = row
-        .get(2)
-        .map_err(|e| format!("Longitude read error: {}", e))?;
-    let lat: f64 = row
-        .get(3)
-        .map_err(|e| format!("Latitude read error: {}", e))?;
-    let row_id: i64 = row
-        .get(4)
-        .map_err(|e| format!("Row id read error: {}", e))?;
-
-    let mut bytes: u64 = 96 + 16;
-    let mut properties = Vec::with_capacity(prepared.prop_names.len());
-    for (col_idx, kind) in prepared.prop_value_kinds.iter().enumerate() {
-        let value = extract_value(row, 5 + col_idx, *kind);
-        bytes += 32
-            + match &value {
-                PropertyValue::String(s) => s.len() as u64,
-                _ => 0,
-            };
-        properties.push(value);
-    }
-    Ok((
-        TileCoord { z: zoom, x, y },
-        Feature {
-            id: Some(row_id as u64),
-            geometry: Geometry::Point(geo_types::Point::new(lon, lat)),
-            properties,
-        },
-        bytes,
-    ))
 }
 
 // ---------------------------------------------------------------------------
