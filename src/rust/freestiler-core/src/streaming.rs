@@ -793,12 +793,25 @@ fn process_units_parallel(
                         *error.lock().unwrap() = Some(e);
                         return;
                     }
-                    let n = done.fetch_add(1, Ordering::Relaxed) + 1;
-                    if n % 50 == 0 {
-                        reporter.report(&format!("  Partitions: {}/{}", n, total));
-                    }
+                    done.fetch_add(1, Ordering::Relaxed);
                 }
             });
+        }
+
+        // Progress is reported ONLY from the calling thread: the R binding's
+        // reporter uses R API calls (Rprintf), which R permits solely on its
+        // main thread. Workers just bump the counter.
+        let mut last_reported = 0usize;
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            let d = done.load(Ordering::Relaxed);
+            if d / 50 > last_reported / 50 {
+                reporter.report(&format!("  Partitions: {}/{}", d, total));
+                last_reported = d;
+            }
+            if d >= total || error.lock().unwrap().is_some() {
+                break;
+            }
         }
     });
     match Arc::try_unwrap(error).unwrap().into_inner().unwrap() {
@@ -851,21 +864,6 @@ impl BucketStore {
     fn bucket_path(&self, coord: TileCoord) -> PathBuf {
         self.dir
             .join(format!("z{}_x{}_y{}.bin", coord.z, coord.x, coord.y))
-    }
-
-    fn append(&mut self, coord: TileCoord, feature: &Feature) -> Result<(), String> {
-        let decoded: u64 = 128
-            + feature
-                .properties
-                .iter()
-                .map(|p| match p {
-                    PropertyValue::String(s) => 32 + s.len() as u64,
-                    _ => 32,
-                })
-                .sum::<u64>();
-        let mut buf = Vec::new();
-        encode_bucket_record(&mut buf, feature);
-        self.append_batch(coord, buf, decoded)
     }
 
     /// Append pre-serialized records for one tile in a single lock hold.
@@ -935,19 +933,33 @@ impl BucketStore {
             .collect();
         coords.sort_by_key(|c| (c.z, c.x, c.y));
 
-        // Budget-check everything on decoded cost before any read-back.
+        // Budget-check everything on decoded cost before any read-back. A
+        // single tile must fit the finalization budget too — otherwise it
+        // would form its own over-budget batch below.
+        let finalize_budget =
+            env_u64("FREESTILER_FINALIZE_BUDGET_MB", DEFAULT_FINALIZE_BUDGET_MB) * 1024 * 1024;
         for coord in &coords {
             let decoded = self.decoded_est.get(coord).copied().unwrap_or(0);
             if decoded > tile_budget {
                 return Err(tile_budget_error(*coord, decoded, tile_budget));
+            }
+            if decoded > finalize_budget {
+                return Err(format!(
+                    "Tile z{}/{}/{} needs about {} MB of decoded features, above the \
+                     finalization budget ({} MB). Raise FREESTILER_FINALIZE_BUDGET_MB \
+                     or reduce point density with drop_rate.",
+                    coord.z,
+                    coord.x,
+                    coord.y,
+                    decoded / 1_048_576,
+                    finalize_budget / 1_048_576
+                ));
             }
         }
 
         // Decode + encode tiles in parallel, batched by AGGREGATE decoded
         // bytes (not tile count): several individually-legal tiles must not
         // decode concurrently past the finalize budget. Spool appends serial.
-        let finalize_budget =
-            env_u64("FREESTILER_FINALIZE_BUDGET_MB", DEFAULT_FINALIZE_BUDGET_MB) * 1024 * 1024;
         let mut batches: Vec<Vec<TileCoord>> = Vec::new();
         let mut batch: Vec<TileCoord> = Vec::new();
         let mut batch_bytes: u64 = 0;
@@ -1559,6 +1571,105 @@ mod tests {
                 }
             }
         }
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(feature = "duckdb")]
+    #[test]
+    fn progress_reports_only_on_calling_thread() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let _guard = ENV_LOCK.lock().unwrap();
+
+        struct ThreadCheckReporter {
+            main: std::thread::ThreadId,
+            ok: AtomicBool,
+        }
+        impl ProgressReporter for ThreadCheckReporter {
+            fn report(&self, _msg: &str) {
+                if std::thread::current().id() != self.main {
+                    self.ok.store(false, Ordering::Relaxed);
+                }
+            }
+        }
+
+        let dir = std::env::temp_dir().join(format!("freestiler_sm_thread_{}", unique_suffix()));
+        fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("t.pmtiles");
+        let reporter = ThreadCheckReporter {
+            main: std::thread::current().id(),
+            ok: AtomicBool::new(true),
+        };
+        let config = TileConfig {
+            tile_format: TileFormat::Mvt,
+            min_zoom: 0,
+            max_zoom: 7,
+            base_zoom: None,
+            simplification: true,
+            drop_rate: None,
+            cluster_distance: None,
+            cluster_maxzoom: None,
+            coalesce: false,
+        };
+        // Small unit budget + 2 workers: many units, parallel path, frequent
+        // progress crossings.
+        std::env::set_var("FREESTILER_UNIT_BUDGET_ROWS", "500");
+        std::env::set_var("FREESTILER_STREAM_WORKERS", "2");
+        let result = generate_pmtiles_from_duckdb_query(
+            None,
+            &tiny_query_sql(20_000),
+            out.to_str().unwrap(),
+            "pts",
+            &config,
+            &reporter,
+        );
+        std::env::remove_var("FREESTILER_UNIT_BUDGET_ROWS");
+        std::env::remove_var("FREESTILER_STREAM_WORKERS");
+        result.unwrap();
+        assert!(
+            reporter.ok.load(Ordering::Relaxed),
+            "reporter was called off the main thread"
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(feature = "duckdb")]
+    #[test]
+    fn single_tile_cannot_bypass_finalize_budget() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(format!("freestiler_sm_finbud_{}", unique_suffix()));
+        fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("f.pmtiles");
+        fs::write(&out, b"KEEP").unwrap();
+
+        // 20K points collapse into one z0 bucket tile (~4 MB decoded),
+        // above a 1 MB finalization budget but under the tile budget.
+        std::env::set_var("FREESTILER_FINALIZE_BUDGET_MB", "1");
+        let config = TileConfig {
+            tile_format: TileFormat::Mvt,
+            min_zoom: 0,
+            max_zoom: 0,
+            base_zoom: None,
+            simplification: true,
+            drop_rate: None,
+            cluster_distance: None,
+            cluster_maxzoom: None,
+            coalesce: false,
+        };
+        let result = generate_pmtiles_from_duckdb_query(
+            None,
+            &tiny_query_sql(20_000),
+            out.to_str().unwrap(),
+            "pts",
+            &config,
+            &SilentReporter,
+        );
+        std::env::remove_var("FREESTILER_FINALIZE_BUDGET_MB");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("FREESTILER_FINALIZE_BUDGET_MB"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(fs::read(&out).unwrap(), b"KEEP");
         fs::remove_dir_all(&dir).unwrap();
     }
 
