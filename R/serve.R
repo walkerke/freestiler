@@ -100,27 +100,30 @@ serve_tiles <- function(path, port = 8080) {
       file_size <- file.info(file_path)$size
       range_header <- req$HTTP_RANGE
 
-      if (!is.null(range_header) && grepl("^bytes=", range_header)) {
-        range <- sub("^bytes=", "", range_header)
-        parts <- strsplit(range, "-")[[1]]
-        start <- as.integer(parts[1])
-        end <- if (nchar(parts[2]) > 0) as.integer(parts[2]) else file_size - 1L
+      # Byte offsets are doubles throughout: archives can exceed the 2 GB
+      # range of R integers, and sprintf("%d") fails on such values.
+      tryCatch({
+        if (!is.null(range_header) && grepl("^bytes=", range_header)) {
+          rng <- .parse_byte_range(range_header, file_size)
 
-        con <- file(file_path, "rb")
-        on.exit(close(con), add = TRUE)
-        seek(con, start)
-        content <- readBin(con, "raw", n = end - start + 1L)
+          con <- file(file_path, "rb")
+          on.exit(close(con), add = TRUE)
+          seek(con, rng$start)
+          content <- readBin(con, "raw", n = rng$end - rng$start + 1)
 
-        cors_headers[["Content-Range"]] <- sprintf("bytes %d-%d/%d", start, end, file_size)
-        cors_headers[["Content-Length"]] <- as.character(length(content))
+          hdrs <- c(cors_headers, .byte_range_headers(rng$start, rng$end, file_size))
+          return(list(status = 206L, headers = hdrs, body = content))
+        }
 
-        return(list(status = 206L, headers = cors_headers, body = content))
-      }
-
-      content <- readBin(file_path, "raw", n = file_size)
-      cors_headers[["Content-Length"]] <- as.character(file_size)
-
-      list(status = 200L, headers = cors_headers, body = content)
+        content <- readBin(file_path, "raw", n = file_size)
+        cors_headers[["Content-Length"]] <- sprintf("%.0f", file_size)
+        list(status = 200L, headers = cors_headers, body = content)
+      }, error = function(e) {
+        # Keep CORS headers on errors so browsers report the real failure
+        # instead of a misleading CORS block.
+        list(status = 500L, headers = cors_headers,
+             body = paste("Server error:", conditionMessage(e)))
+      })
     }
   )
 
@@ -207,4 +210,27 @@ stop_server <- function(port = NULL) {
     error = function(e) NULL
   )
   rm(list = port_key, envir = .server_cache)
+}
+
+
+#' Parse an HTTP Range header into numeric byte offsets
+#' @noRd
+.parse_byte_range <- function(range_header, file_size) {
+  parts <- strsplit(sub("^bytes=", "", range_header), "-")[[1]]
+  start <- suppressWarnings(as.numeric(parts[1]))
+  end <- if (length(parts) > 1 && nzchar(parts[2])) suppressWarnings(as.numeric(parts[2])) else file_size - 1
+  end <- min(end, file_size - 1)
+  if (is.na(start) || is.na(end) || start < 0 || end < start) {
+    stop("Invalid Range header: ", range_header, call. = FALSE)
+  }
+  list(start = start, end = end)
+}
+
+#' Content-Range / Content-Length headers for a byte range (double-safe)
+#' @noRd
+.byte_range_headers <- function(start, end, file_size) {
+  list(
+    "Content-Range" = sprintf("bytes %.0f-%.0f/%.0f", start, end, file_size),
+    "Content-Length" = sprintf("%.0f", end - start + 1)
+  )
 }
