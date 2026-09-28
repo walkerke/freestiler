@@ -1,4 +1,4 @@
-# freestiler (development version)
+# freestiler 0.3.0
 
 * Experimental ordered categorical clustering is available through
   `freestile_file()` in R and Python (`category`, `category_values`,
