@@ -6,6 +6,7 @@ aggregation -> per-resolution hex layers + a points layer -> freestile().
 
 import math
 import warnings
+from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
@@ -16,6 +17,25 @@ from freestiler import freestile_h3
 from freestiler import h3 as h3mod
 
 pmtiles_reader = pytest.importorskip("pmtiles.reader")
+
+
+def test_category_arguments_and_aggregate_only_validation(tmp_path):
+    for options, match in [
+        (dict(include_points=None), "include_points"),
+        (dict(include_points=False, base_zoom=4), "base_zoom"),
+        (dict(category_values=[1]), "requires"),
+    ]:
+        with pytest.raises(ValueError, match=match):
+            freestile_h3("invalid SQL", tmp_path / "x.pmtiles", **options)
+    for values in ([1, 1], ["_other"], ["_Other"], [1.5], [2**53], list(range(65)), [1, "a"]):
+        with pytest.raises(ValueError):
+            h3mod._validate_category("g", values)
+    with pytest.raises(ValueError, match="reserved"):
+        h3mod._parse_agg({"h3_id": "COUNT(*)"})
+
+
+def _category_sql():
+    return (Path(__file__).resolve().parents[2] / "tests/fixtures/h3-categorical.sql").read_text()
 
 
 def _h3_available() -> bool:
@@ -37,6 +57,96 @@ def _h3_available() -> bool:
 requires_h3 = pytest.mark.skipif(
     not _h3_available(), reason="DuckDB H3 community extension not available"
 )
+
+
+@requires_h3
+def test_categorical_conservation_ties_and_integer_range():
+    import duckdb
+    with duckdb.connect() as con:
+        h3mod._open_input(con, _category_sql(), "EPSG:4326", True)
+        agg = h3mod._parse_agg({"n": "COUNT(*)", "wide": "2147483648::HUGEINT", "avg": "AVG(2.0)"})
+        spec = h3mod._category_spec(con, "group_id", [1, 2, 3], agg.names)
+        for resolution in (2, 4):
+            out = h3mod._aggregate_resolution(con, resolution, agg, spec)
+            assert out.point_count.sum() == 8
+            assert out[spec["keys"]].sum().tolist() == [4, 2, 0, 2]
+            assert out.modal_tie.sum() == 1
+            assert out.loc[out.modal_tie, "modal_category"].isna().all()
+            assert out.loc[out.modal_category == "_other", "modal_count"].tolist() == [2]
+            assert out.wide.tolist() == [2147483648] * len(out)
+            assert str(out.wide.dtype) == "Int64"
+            for geom in out.geometry:
+                parts = geom.geoms if geom.geom_type == "MultiPolygon" else [geom]
+                assert all(p.bounds[2] - p.bounds[0] <= 180 for p in parts)
+        with pytest.raises(ValueError, match="collide"):
+            h3mod._category_spec(con, "group_id", [1, 2], ["point_count"])
+        con.execute("CREATE TEMP TABLE limits AS SELECT 9007199254740992::HUGEINT AS too_big")
+        with pytest.raises(ValueError, match="exact range"):
+            h3mod._check_integer_fields(con, "limits")
+
+
+@requires_h3
+def test_aggregate_only_decoded_tiles_and_no_raw_fetch(tmp_path, monkeypatch):
+    import gzip
+    import mapbox_vector_tile
+    original = h3mod._query_to_gdf
+    def guarded(con, sql):
+        assert "EXCLUDE (geom)" not in sql, "raw points fetched"
+        return original(con, sql)
+    monkeypatch.setattr(h3mod, "_query_to_gdf", guarded)
+    output = tmp_path / "category.pmtiles"
+    freestile_h3(_category_sql(), output, min_zoom=3, max_zoom=5,
+                 h3_resolutions=[2, 2, 3], include_points=False, fade=True,
+                 source_crs="EPSG:4326", category="group_id", category_values=[1, 2, 3],
+                 agg={"wide": "2147483648::HUGEINT", "avg": "AVG(2.0)"}, quiet=True)
+    with open(output, "rb") as f:
+        source = pmtiles_reader.MmapSource(f)
+        layers = pmtiles_reader.Reader(source).metadata()["vector_layers"]
+        assert {l["id"] for l in layers} == {"h3_r02", "h3_r03"}
+        assert layers[0]["fields"]["point_count"] == "Number"
+        assert layers[0]["fields"]["modal_tie"] == "Boolean"
+        assert layers[0]["fields"]["modal_category"] == "String"
+        by_zoom_layer = {}
+        for (z, _, _), tile in pmtiles_reader.all_tiles(source):
+            decoded = mapbox_vector_tile.decode(gzip.decompress(tile))
+            for name, layer in decoded.items():
+                cells = by_zoom_layer.setdefault((z, name), {})
+                for feature in layer["features"]:
+                    props = feature["properties"]
+                    assert type(props["wide"]) is int and props["wide"] == 2147483648
+                    assert type(props["avg"]) is float and props["avg"] == 2.0
+                    assert type(props["modal_tie"]) is bool
+                    if props["modal_tie"]:
+                        assert "modal_category" not in props
+                    previous = cells.setdefault(props["h3_id"], props)
+                    assert previous == props
+        for meta in layers:
+            for z in range(meta["minzoom"], meta["maxzoom"] + 1):
+                cells = by_zoom_layer[(z, meta["id"])].values()
+                assert sum(p["point_count"] for p in cells) == 8
+                assert [sum(p[f"group_id:{g}"] for p in cells) for g in (1,2,3,"_other")] == [4,2,0,2]
+
+
+@requires_h3
+def test_string_dictionary_inference_and_empty_dictionary():
+    import duckdb
+    con = duckdb.connect()
+    try:
+        sql = '''SELECT ST_Point(0,0) AS geom, g AS "a""b"
+                 FROM (VALUES ('a''b'), ('x:y'), (NULL)) t(g)'''
+        h3mod._open_input(con, sql, "EPSG:4326", quiet=True)
+        agg = h3mod._parse_agg("count")
+        spec = h3mod._category_spec(con, 'a"b', None, agg.names)
+        out = h3mod._aggregate_resolution(con, 4, agg, spec)
+        assert out[spec["keys"]].iloc[0].tolist() == [1, 1, 1]
+        assert bool(out.modal_tie.iloc[0])
+        empty = h3mod._category_spec(con, 'a"b', [], agg.names)
+        out = h3mod._aggregate_resolution(con, 4, agg, empty)
+        assert out.point_count.iloc[0] == 3
+        assert out.modal_category.iloc[0] == "_other"
+        assert not bool(out.modal_tie.iloc[0])
+    finally:
+        con.close()
 
 
 def _points(n=2000, seed=1):

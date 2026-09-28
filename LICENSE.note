@@ -1,0 +1,7 @@
+Freestiler's original code is licensed under MIT (see LICENSE).
+
+The Rust modules in src/rust/freestiler-core/src/supercluster contain a port of
+Supercluster 8.0.1, copyright (c) 2021 Mapbox, and KDBush 4.1.0, copyright (c)
+2026 Vladimir Agafonkin. These portions remain under the ISC license. The full
+copyright and license notices are in inst/COPYRIGHTS (installed as COPYRIGHTS)
+and alongside the source in src/supercluster/UPSTREAM-LICENSES in the Rust core.

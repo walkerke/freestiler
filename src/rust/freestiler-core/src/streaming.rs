@@ -142,6 +142,19 @@ pub fn generate_pmtiles_from_duckdb_query(
     let layer_meta = LayerMeta {
         name: layer_name.to_string(),
         property_names: prepared.prop_names.clone(),
+        property_types: prepared
+            .prop_value_kinds
+            .iter()
+            .map(|kind| {
+                match kind {
+                    DuckDbValueKind::String => "string",
+                    DuckDbValueKind::Int => "integer",
+                    DuckDbValueKind::Double => "double",
+                    DuckDbValueKind::Bool => "boolean",
+                }
+                .to_string()
+            })
+            .collect(),
         min_zoom: config.min_zoom,
         max_zoom: config.max_zoom,
         geometry_type: Some("Point".to_string()),

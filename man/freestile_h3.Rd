@@ -20,7 +20,10 @@ freestile_h3(
   fade = FALSE,
   fade_overlap = 1L,
   overwrite = TRUE,
-  quiet = FALSE
+  quiet = FALSE,
+  include_points = TRUE,
+  category = NULL,
+  category_values = NULL
 )
 }
 \arguments{
@@ -57,7 +60,8 @@ take over from hex aggregations. Default \code{NULL} resolves to
 \item{h3_resolutions}{Optional override of the zoom -> H3 resolution
 mapping. Accepts \code{NULL} (use built-in defaults), an unnamed integer
 vector with \code{length(min_zoom:(base_zoom - 1L))} entries mapped
-positionally, or a named integer vector with names that parse to integer
+positionally (\code{length(min_zoom:max_zoom)} for aggregate-only output),
+or a named integer vector with names that parse to integer
 zoom levels (sparse overrides; defaults fill the rest). All resolutions
 must be integers in \code{0:15}. The same resolution appearing in
 non-contiguous zoom runs (e.g. zooms 4--5 and 8) is rejected.}
@@ -84,6 +88,23 @@ resolutions. Default \code{FALSE} (disjoint windows, clean zoom breaks).}
 (default \code{TRUE}).}
 
 \item{quiet}{Logical. Suppress progress messages (default \code{FALSE}).}
+
+\item{include_points}{Logical. Include the raw-point layer (default \code{TRUE}).
+Set \code{FALSE} for aggregate-only output over the complete \code{min_zoom:max_zoom}
+range; \code{base_zoom} must then be \code{NULL}, and positional \code{h3_resolutions}
+must cover that complete range. Hex geometries are still held in memory.}
+
+\item{category}{Optional categorical column to summarize. Adds \code{point_count},
+per-category counts named \code{"<category>:<value>"}, and \code{modal_category},
+\code{modal_count}, \code{modal_share}, and \code{modal_tie}. Ties have no selected category.}
+
+\item{category_values}{Optional character or whole-number category dictionary
+(at most 64 values). If \code{NULL}, infer it from the input. NULL and unlisted
+values contribute to \verb{<category>:_other}, including in the mode. \verb{_other}
+and \verb{_total} are reserved. Counts are checked for exact integer transport
+up to 2^53 - 1; these are counts of input records, not weighted totals.
+Category labels must be unique ignoring case. Modal labels are strings,
+even for numeric categories; tied labels are missing in the encoded tile.}
 }
 \value{
 The output file path (invisibly).
@@ -95,6 +116,10 @@ show progressively finer hexagons, and zooms at or above \code{base_zoom} show
 individual points. Aggregations (count, sum, mean, etc.) are computed in
 DuckDB via the H3 community extension; the function then assembles the
 per-resolution hex layers and the raw-point layer via \code{\link[=freestile]{freestile()}}.
+Set \code{include_points = FALSE} to build only hexagons, for example when an
+existing point archive supplies the close-up view. Aggregation happens in
+DuckDB, but all resulting hex layers are still materialized for tiling;
+this is not a bounded-memory polygon pipeline.
 }
 \details{
 Each distinct H3 resolution becomes its own MVT source-layer (named
@@ -150,6 +175,12 @@ freestile_h3(pts, "wind_fade.pmtiles",
   agg = "count",
   min_zoom = 2, max_zoom = 12, base_zoom = 10,
   fade = TRUE)
+
+# Categorical hexes only; all category counts remain available for styling.
+pts$group <- sample(c("a", "b", "c"), nrow(pts), replace = TRUE)
+freestile_h3(pts, "groups.pmtiles", include_points = FALSE,
+  category = "group", category_values = c("a", "b", "c"),
+  min_zoom = 3, max_zoom = 8)
 }
 
 }

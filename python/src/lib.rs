@@ -592,10 +592,35 @@ fn _freestile_duckdb(
 fn _freestiler(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(_freestile, m)?)?;
     #[cfg(feature = "geoparquet")]
+    m.add_function(wrap_pyfunction!(_cluster_file, m)?)?;
+    #[cfg(feature = "geoparquet")]
     m.add_function(wrap_pyfunction!(_freestile_file, m)?)?;
     #[cfg(feature = "duckdb")]
     m.add_function(wrap_pyfunction!(_freestile_duckdb, m)?)?;
     #[cfg(feature = "duckdb")]
     m.add_function(wrap_pyfunction!(_freestile_duckdb_query, m)?)?;
     Ok(())
+}
+
+#[cfg(feature = "geoparquet")]
+#[pyfunction]
+fn _cluster_file(py:Python<'_>, input_path:String, output_path:String, layer_name:String,
+    tile_format:String,min_zoom:u8,max_zoom:u8,radius:f64,min_points:u32,
+    category:String,category_values_json:String,quiet:bool)->PyResult<()> {
+    py.detach(move || {
+        let run=|| -> Result<(),String> {
+            if min_zoom>max_zoom || max_zoom>30 || min_points==0 || !radius.is_finite() || radius<=0. {
+                return Err("Invalid clustering zoom/radius/min_points".into());
+            }
+            let format=match tile_format.as_str() {"mvt"=>TileFormat::Mvt,"mlt"=>TileFormat::Mlt,_=>return Err("Invalid tile format".into())};
+            let source=freestiler_core::file_input::ParquetPointSource::open(&input_path)?;
+            let categories=freestiler_core::cluster_output::Categories::from_json(&category,&category_values_json)?;
+            let reporter:Box<dyn ProgressReporter>=if quiet {Box::new(engine::SilentReporter)}else{Box::new(PyReporter)};
+            freestiler_core::cluster_output::write_pmtiles(&source,&output_path,&layer_name,
+                freestiler_core::supercluster::Options {min_zoom,max_zoom,radius,min_points,..Default::default()},
+                &categories,format,reporter.as_ref())?;
+            Ok(())
+        };
+        run().map_err(pyo3::exceptions::PyRuntimeError::new_err)
+    })
 }

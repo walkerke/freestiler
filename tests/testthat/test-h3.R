@@ -5,9 +5,7 @@
 
 .has_h3_extension <- function() {
   if (!requireNamespace("DBI", quietly = TRUE) ||
-      !requireNamespace("duckdb", quietly = TRUE)) {
-    return(FALSE)
-  }
+      !requireNamespace("duckdb", quietly = TRUE)) return(FALSE)
   tryCatch({
     con <- DBI::dbConnect(duckdb::duckdb())
     on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
@@ -22,9 +20,106 @@ skip_if_no_h3 <- function() {
   skip_if_not_installed("sf")
   skip_if_not_installed("DBI")
   skip_if_not_installed("duckdb")
-  skip_if_not(.has_h3_extension(),
-    message = "DuckDB H3 community extension not available")
+  skip_if_not(.has_h3_extension(), message = "DuckDB H3 community extension not available")
 }
+
+test_that("aggregate-only and category arguments validate before input execution", {
+  expect_error(freestile_h3("invalid SQL", tempfile(), include_points = NA), "include_points")
+  expect_error(freestile_h3("invalid SQL", tempfile(), include_points = FALSE, base_zoom = 4), "base_zoom")
+  expect_error(freestile_h3("invalid SQL", tempfile(), category_values = 1:3), "requires")
+  expect_error(.h3_validate_category("g", 1:65), "64")
+  expect_error(.h3_validate_category("g", c(1, 1)), "unique")
+  expect_error(.h3_validate_category("g", "_other"), "reserved")
+  expect_error(.h3_validate_category("g", "_Other"), "reserved")
+  expect_error(.h3_validate_category("g", c(1, 1.5)), "whole")
+  expect_error(.h3_validate_category("g", 2^53), "whole")
+  expect_error(.h3_parse_agg(c(h3_id = "COUNT(*)")), "reserved")
+})
+
+test_that("H3 default viewer field ignores categorical bookkeeping", {
+  fields <- list("group_id:1" = "Number", h3_id = "String", h3_resolution = "Number",
+    modal_count = "Number", modal_share = "Number", point_count = "Number", total = "Number")
+  expect_identical(.h3_default_agg_column(list(fields = fields)), "point_count")
+  expect_identical(.h3_default_agg_column(list(fields = list(h3_id="string", n="string", total="string"))), "n")
+  expect_identical(.h3_default_agg_column(list(fields = list(h3_id="string", avg="string", point_count="string"))), "avg")
+  expect_identical(.h3_default_agg_column(list(fields = list(a="Number", z="Number"), field_order=c("z", "a"))), "z")
+})
+
+test_that("declared wide integers keep their type through property extraction", {
+  x <- c(2147483648, NA_real_, 2^53-1)
+  attr(x, "freestiler_integer") <- TRUE
+  p <- .extract_properties(data.frame(n=x, avg=c(2, 2, 2)))
+  expect_identical(p$types, c("integer_double", "numeric"))
+  expect_equal(p$num_values[[1]], as.numeric(x))
+  bad <- structure(1.5, freestiler_integer=TRUE)
+  expect_error(.extract_properties(data.frame(n=bad)), "whole numbers")
+})
+
+test_that("categorical H3 counts, ties, unknowns, and wide integers are exact", {
+  skip_if_no_h3()
+  sql <- paste(readLines(test_path("..", "fixtures", "h3-categorical.sql")), collapse="\n")
+  ctx <- .h3_open_input(sql, "EPSG:4326", NULL, quiet=TRUE)
+  on.exit(DBI::dbDisconnect(ctx$con, shutdown=TRUE), add=TRUE)
+  agg <- .h3_parse_agg(c(n="COUNT(*)", wide="2147483648::HUGEINT", avg="AVG(2.0)"))
+  cat <- .h3_category_spec(ctx$con, "group_id", 1:3, agg$names)
+  for (r in c(2L, 4L)) {
+    out <- .h3_aggregate_resolution(ctx$con, r, agg, cat)
+    expect_equal(sum(out$point_count), 8)
+    expect_equal(colSums(sf::st_drop_geometry(out)[cat$keys]), c(4, 2, 0, 2), ignore_attr=TRUE)
+    expect_equal(sum(out$modal_tie), 1)
+    expect_true(all(is.na(out$modal_category[out$modal_tie])))
+    expect_equal(out$modal_count[out$modal_category == "_other" & !is.na(out$modal_category)], 2)
+    expect_true(isTRUE(attr(out$wide, "freestiler_integer")))
+    expect_true(all(out$wide == 2147483648))
+    expect_true(all(vapply(sf::st_geometry(out), function(g) {
+      parts <- suppressWarnings(sf::st_cast(sf::st_sfc(g), "POLYGON"))
+      all(vapply(parts, function(p) diff(range(sf::st_coordinates(p)[,1])) <= 180, logical(1)))
+    }, logical(1))))
+  }
+  expect_error(.h3_category_spec(ctx$con, "group_id", 1:3, "point_count"), "collide")
+  DBI::dbExecute(ctx$con, "CREATE TEMP TABLE limits AS SELECT 9007199254740992::HUGEINT AS too_big")
+  expect_error(.h3_check_integer_fields(ctx$con, "limits"), "exact range")
+})
+
+test_that("aggregate-only builds full zoom windows without fetching raw points", {
+  skip_if_no_h3()
+  original <- .h3_query_to_sf
+  local_mocked_bindings(.h3_query_to_sf = function(con, sql) {
+    if (grepl("EXCLUDE (geom)", sql, fixed=TRUE)) stop("raw-point fetch is forbidden")
+    original(con, sql)
+  })
+  sql <- paste(readLines(test_path("..", "fixtures", "h3-categorical.sql")), collapse="\n")
+  output <- tempfile(fileext=".pmtiles")
+  on.exit(unlink(output), add=TRUE)
+  freestile_h3(sql, output, min_zoom=3, max_zoom=5, h3_resolutions=c(2,2,3),
+    source_crs="EPSG:4326", include_points=FALSE, category="group_id", category_values=1:3,
+    fade=TRUE, quiet=TRUE)
+  layers <- pmtiles_metadata(output)$metadata$vector_layers
+  expect_setequal(vapply(layers, `[[`, "", "id"), c("h3_r02", "h3_r03"))
+  expect_equal(layers[[1]]$minzoom, 3)
+  expect_equal(layers[[2]]$maxzoom, 5)
+  expect_identical(layers[[1]]$fields$point_count, "Number")
+  expect_identical(layers[[1]]$fields$modal_tie, "Boolean")
+  expect_identical(layers[[1]]$fields$modal_category, "String")
+  expect_identical(.h3_default_agg_column(layers[[1]]), "point_count")
+})
+
+test_that("string category inference quotes values and explicit empty dictionaries work", {
+  skip_if_no_h3()
+  sql <- "SELECT ST_Point(0,0) AS geom, g AS \"a\"\"b\" FROM (VALUES ('a''b'), ('x:y'), (NULL)) t(g)"
+  ctx <- .h3_open_input(sql, "EPSG:4326", NULL, quiet=TRUE)
+  on.exit(DBI::dbDisconnect(ctx$con, shutdown=TRUE), add=TRUE)
+  agg <- .h3_parse_agg("count")
+  spec <- .h3_category_spec(ctx$con, 'a"b', NULL, agg$names)
+  out <- .h3_aggregate_resolution(ctx$con, 4, agg, spec)
+  expect_equal(unname(unlist(sf::st_drop_geometry(out)[spec$keys])), c(1,1,1))
+  expect_true(out$modal_tie)
+  empty <- .h3_category_spec(ctx$con, 'a"b', character(), agg$names)
+  out <- .h3_aggregate_resolution(ctx$con, 4, agg, empty)
+  expect_equal(out$point_count, 3)
+  expect_equal(out$modal_category, "_other")
+  expect_false(out$modal_tie)
+})
 
 .make_points <- function(n = 2000, seed = 1L) {
   set.seed(seed)
@@ -688,7 +783,8 @@ test_that(".h3_split_antimeridian() splits dateline-crossing hexes", {
   # Attributes untouched, geometry normalized to MULTIPOLYGON.
   expect_equal(fixed$h3_id, hex_sf$h3_id)
   expect_equal(fixed$count, hex_sf$count)
-  expect_true(all(sf::st_geometry_type(fixed) == "MULTIPOLYGON"))
+  expect_identical(as.character(sf::st_geometry_type(fixed)), c("MULTIPOLYGON", "POLYGON"))
+  expect_identical(sf::st_geometry(fixed)[[2]], sf::st_geometry(hex_sf)[[2]])
 
   # The crossing hex is split into pieces, none of which spans the world.
   split_parts <- sf::st_cast(sf::st_geometry(fixed)[1L], "POLYGON")

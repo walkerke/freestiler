@@ -1,0 +1,64 @@
+name: Supercluster parity
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/supercluster-parity.yml"
+      - "dev/supercluster-port/**"
+      - "tools/supercluster-compat/**"
+      - "src/rust/freestiler-core/src/supercluster/**"
+      - "src/rust/freestiler-core/tests/fixtures/supercluster-*"
+      - "src/rust/freestiler-core/Cargo.toml"
+      - "inst/COPYRIGHTS"
+      - "python/LICENSES/**"
+      - "tools/check_upstream_licenses.py"
+      - "DESCRIPTION"
+      - "LICENSE.note"
+      - ".Rbuildignore"
+      - "python/pyproject.toml"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/supercluster-parity.yml"
+      - "dev/supercluster-port/**"
+      - "tools/supercluster-compat/**"
+      - "src/rust/freestiler-core/src/supercluster/**"
+      - "src/rust/freestiler-core/tests/fixtures/supercluster-*"
+      - "src/rust/freestiler-core/Cargo.toml"
+      - "inst/COPYRIGHTS"
+      - "python/LICENSES/**"
+      - "tools/check_upstream_licenses.py"
+      - "DESCRIPTION"
+      - "LICENSE.note"
+      - ".Rbuildignore"
+      - "python/pyproject.toml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  kernel:
+    name: Kernel (${{ matrix.os }}, Rust ${{ matrix.toolchain }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-2022, macos-14]
+        toolchain: ["1.77.2", stable]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Check distribution attribution copies
+        run: python tools/check_upstream_licenses.py
+      - name: Install pinned toolchain without changing default
+        run: rustup toolchain install ${{ matrix.toolchain }} --profile minimal --no-self-update
+      - name: Run the actual kernel source and strict upstream fixtures
+        run: cargo +${{ matrix.toolchain }} test --manifest-path tools/supercluster-compat/Cargo.toml --locked
+      - name: Verify optimized arithmetic against the same fixtures
+        run: cargo +${{ matrix.toolchain }} test --manifest-path tools/supercluster-compat/Cargo.toml --locked --release
+      # Kernel-only job: not a claim that the whole core/dependency graph has
+      # passed MSRV or that other bindings have been exercised. Keep strict
+      # assertions across platforms; investigate libm projection on failure.

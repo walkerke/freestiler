@@ -8,8 +8,8 @@ version = "0.2.0"
 description = "Rust-powered MLT/MVT vector tile engine for Python"
 readme = "README.md"
 requires-python = ">=3.9,<3.15"
-license = {text = "MIT"}
-license-files = ["LICENSE.md"]
+license = {text = "MIT AND ISC"}
+license-files = ["LICENSE.md", "LICENSES/UPSTREAM-LICENSES"]
 authors = [
     {name = "Kyle Walker", email = "kyle@walker-data.com"},
 ]

@@ -315,6 +315,12 @@ freestile <- function(
     } else if (is.integer(col)) {
       col_types[i] <- "integer"
       int_values[[i]] <- col
+    } else if (is.numeric(col) && isTRUE(attr(col, "freestiler_integer"))) {
+      if (any(!is.na(col) & (!is.finite(col) | col != trunc(col) | abs(col) > 2^53 - 1))) {
+        stop("Declared integer properties must be whole numbers within 2^53 - 1.", call. = FALSE)
+      }
+      col_types[i] <- "integer_double"
+      num_values[[i]] <- as.double(col)
     } else if (is.numeric(col)) {
       col_types[i] <- "numeric"
       num_values[[i]] <- as.double(col)
@@ -369,6 +375,25 @@ freestile <- function(
 #' @param quiet Logical. Whether to suppress progress (default FALSE).
 #' @param engine Character. Backend engine: `"geoparquet"` (default, for
 #'   GeoParquet files) or `"duckdb"` (for any file format DuckDB supports).
+#' @param category Character or NULL. For the ordered categorical clustering
+#'   increment, the attribute whose counts are carried into each cluster.
+#' @param category_values Character or numeric vector. An explicit dictionary
+#'   of 1--64 strings or JS-safe integers. Missing/unlisted values count as
+#'   `category:_other`; singleton attributes are preserved.
+#' @param cluster_min_points Integer. Minimum population to form a cluster
+#'   (default 2), used by the categorical clustering increment.
+#'
+#' @details
+#' With `category`, the GeoParquet engine uses the pinned Supercluster 8.0.1
+#' algorithm in physical file order, with `cluster_distance` measured in pixels
+#' relative to a 512-pixel tile. This initial increment requires
+#' `cluster_maxzoom = max_zoom`, `base_zoom = NULL`, `simplification = TRUE`,
+#' and no `drop_rate`/`coalesce`; use a separate dot
+#' source above the clustered zooms. It preserves counts at every clustered zoom
+#' and writes `cluster_expansion_zoom` for click-to-expand. Ordering changes
+#' membership. The compact global index remains resident: this is not an
+#' out-of-core clustering or fixed-RAM guarantee. The existing noncategorical
+#' clustering path is not yet migrated to this algorithm.
 #'
 #' @return The output file path (invisibly).
 #'
@@ -394,7 +419,10 @@ freestile_file <- function(
     simplification = TRUE,
     overwrite = TRUE,
     quiet = FALSE,
-    engine = "geoparquet"
+    engine = "geoparquet",
+    category = NULL,
+    category_values = NULL,
+    cluster_min_points = 2L
 ) {
   tile_format <- match.arg(tile_format, c("mvt", "mlt"))
   engine <- match.arg(engine, c("geoparquet", "duckdb"))
@@ -409,6 +437,18 @@ freestile_file <- function(
 
   if (is.null(layer_name)) {
     layer_name <- tools::file_path_sans_ext(basename(output))
+  }
+
+  if (!is.null(category) || !is.null(category_values)) {
+    if (engine != "geoparquet")
+      stop("Ordered categorical clustering currently requires engine = 'geoparquet'.", call. = FALSE)
+    if (!is.null(base_zoom))
+      stop("Categorical clustering requires base_zoom = NULL; all points contribute at every clustered zoom.", call. = FALSE)
+    if (!isTRUE(simplification))
+      stop("Categorical clustering requires simplification = TRUE; unquantized output is not supported.", call. = FALSE)
+    return(.cluster_file(input, output, layer_name, tile_format, min_zoom, max_zoom,
+      cluster_distance, cluster_maxzoom, cluster_min_points, category,
+      category_values, drop_rate, coalesce, quiet))
   }
 
   if (engine == "duckdb") {
@@ -721,7 +761,7 @@ freestile_query <- function(
 #' @noRd
 .has_rust_duckdb <- function() {
   if (!is.null(.pkg_cache$rust_duckdb)) return(.pkg_cache$rust_duckdb)
-  result <- rust_freestile_duckdb_query("", "", "", "", "mvt", 0L, 6L, -1L,
+  result <- rust_freestile_duckdb_query("SELECT 1", "", "", "", "mvt", 0L, 6L, -1L,
     TRUE, -1.0, -1.0, -1L, FALSE, TRUE, "never")
   val <- !startsWith(result, "Error: DuckDB support not compiled")
   .pkg_cache$rust_duckdb <- val

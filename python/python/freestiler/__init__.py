@@ -361,11 +361,25 @@ def freestile_file(
     overwrite: bool = True,
     quiet: bool = False,
     engine: str = "auto",
+    category: str | None = None,
+    category_values: list | None = None,
+    cluster_min_points: int = 2,
 ) -> Path:
     """Create a PMTiles archive directly from a spatial file.
 
     Reads the file in Rust without going through Python/GeoPandas, which is
     faster and uses less memory for large files.
+
+    With ``category`` and ``category_values``, the GeoParquet engine uses the
+    pinned Supercluster 8.0.1 algorithm in physical file order, with radius in
+    512-tile pixels. This first categorical increment requires
+    ``cluster_maxzoom=max_zoom``, ``base_zoom=None``, ``simplification=True``,
+    and no ``drop_rate`` or ``coalesce``. Use a
+    separate dot source above the cutoff. The compact global index remains
+    resident; this is not an out-of-core or fixed-memory clustering claim.
+    Unlisted/missing categories count as ``category:_other``; singletons keep
+    their original attributes. ``cluster_min_points`` defaults to 2. The legacy
+    noncategorical clustering path has not yet been migrated.
 
     Parameters
     ----------
@@ -438,6 +452,36 @@ def freestile_file(
         use_duckdb = input_path.suffix.lower() not in _GEOPARQUET_EXTENSIONS
     else:
         use_duckdb = engine == "duckdb"
+
+    if category is not None or category_values is not None:
+        import json
+        import math
+
+        if use_duckdb:
+            raise ValueError("Ordered categorical clustering currently requires the GeoParquet engine")
+        if cluster_distance is None or not math.isfinite(cluster_distance) or cluster_distance <= 0:
+            raise ValueError("Categorical clustering requires a positive cluster_distance")
+        if base_zoom is not None:
+            raise ValueError("Categorical clustering requires base_zoom = None; all points contribute at every clustered zoom")
+        if simplification is not True:
+            raise ValueError("Categorical clustering requires simplification = True; unquantized output is not supported")
+        if cluster_maxzoom != max_zoom:
+            raise ValueError("This categorical increment requires cluster_maxzoom = max_zoom; use a separate dot source above it")
+        if drop_rate is not None or coalesce:
+            raise ValueError("Categorical clustered zooms conserve all points: omit drop_rate and coalesce")
+        if not isinstance(category, str) or not category:
+            raise ValueError("category must name one column")
+        if not isinstance(cluster_min_points, int) or isinstance(cluster_min_points, bool) or not 1 <= cluster_min_points <= 2**31 - 1:
+            raise ValueError("cluster_min_points must be a positive integer")
+        if category_values is None or not 1 <= len(category_values) <= 64:
+            raise ValueError("category_values must contain 1 to 64 distinct strings or integers")
+        values = [int(v) if isinstance(v, np.integer) else v for v in category_values]
+        if not (all(isinstance(v, str) for v in values) or all(type(v) is int and abs(v) <= 2**53 - 1 for v in values)) or len(set(values)) != len(values):
+            raise ValueError("category_values must be distinct, uniformly typed strings or JS-safe integers")
+        from freestiler._freestiler import _cluster_file
+        _cluster_file(str(input_path), str(output), layer_name, tile_format, min_zoom, max_zoom,
+                      float(cluster_distance), cluster_min_points, category, json.dumps(values), quiet)
+        return output
 
     common_kwargs = dict(
         output_path=str(output),

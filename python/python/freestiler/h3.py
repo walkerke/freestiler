@@ -15,8 +15,11 @@ resolutions.
 
 from __future__ import annotations
 
+import math
+import re
 import warnings
 from dataclasses import dataclass
+from numbers import Real
 from pathlib import Path
 from typing import Optional, Union
 
@@ -83,6 +86,9 @@ def freestile_h3(
     fade_overlap: int = 1,
     overwrite: bool = True,
     quiet: bool = False,
+    include_points: bool = True,
+    category: Optional[str] = None,
+    category_values: Optional[list] = None,
 ) -> Path:
     """Create vector tiles with dynamic H3 hexagonal binning.
 
@@ -90,7 +96,9 @@ def freestile_h3(
     writes a PMTiles archive in which low zooms show coarse hexagons,
     intermediate zooms show progressively finer hexagons, and zooms at or
     above ``base_zoom`` show individual points. Aggregations are computed in
-    DuckDB via the H3 community extension.
+    DuckDB via the H3 community extension. ``include_points=False`` builds
+    only hexagons, for example alongside an existing point archive. All hex
+    layers are still materialized for tiling, not streamed with bounded memory.
 
     Each distinct H3 resolution becomes its own MVT source-layer (named
     ``"<hex_layer_prefix>_r<NN>"``, e.g. ``"h3_r05"``); raw points are emitted
@@ -130,7 +138,8 @@ def freestile_h3(
     h3_resolutions : None, list, or dict
         Optional override of the zoom -> H3 resolution mapping. ``None`` uses
         the built-in defaults; a list maps positionally to the hex zooms
-        (``range(min_zoom, base_zoom)``, so its length must match); a dict
+        (``range(min_zoom, base_zoom)``, or through ``max_zoom`` inclusive
+        for aggregate-only output, so its length must match); a dict
         keyed by integer zoom level applies sparse overrides with defaults
         filling the rest. All resolutions must be integers in 0..15. The same
         resolution appearing in non-contiguous zoom runs is rejected.
@@ -154,6 +163,22 @@ def freestile_h3(
         Whether to overwrite an existing output file (default True).
     quiet : bool
         Suppress progress messages (default False).
+    include_points : bool
+        Include raw points (default True). False builds only hexagons across
+        min_zoom through max_zoom; base_zoom must be None and positional
+        h3_resolutions must cover that complete range. Cell geometry is still
+        materialized; this is not bounded streaming output.
+    category : str, optional
+        Category column. Adds point_count, '<category>:<value>' counts and
+        modal_category, modal_count, modal_share, modal_tie. Ties have no winner.
+    category_values : list, optional
+        At most 64 string or whole-number categories, inferred when omitted.
+        Null and unlisted values contribute to '<category>:_other', including
+        in the mode. _other and _total are reserved. Integer aggregate values
+        must be within 2**53 - 1 for exact R/Python transport parity. Counts
+        count input records, not weights. Labels must be unique ignoring case.
+        Modal labels are strings, even for numeric categories; tied labels
+        are absent from the encoded tile.
 
     Returns
     -------
@@ -182,7 +207,12 @@ def freestile_h3(
     if min_zoom < 0 or max_zoom < min_zoom:
         raise ValueError("min_zoom and max_zoom must satisfy 0 <= min_zoom <= max_zoom.")
 
-    base_zoom = _resolve_base_zoom(base_zoom, min_zoom, max_zoom)
+    if not isinstance(include_points, bool):
+        raise ValueError("include_points must be True or False.")
+    if not include_points and base_zoom is not None:
+        raise ValueError("base_zoom must be None when include_points=False.")
+    _validate_category(category, category_values)
+    base_zoom = _resolve_base_zoom(base_zoom, min_zoom, max_zoom) if include_points else max_zoom + 1
 
     if not isinstance(fade, bool):
         raise ValueError("fade must be True or False.")
@@ -207,8 +237,9 @@ def freestile_h3(
     if not quiet:
         n = len(windows)
         suffix = f", fade overlap = {fade_overlap}" if fade else ""
+        point_info = f"base_zoom = {base_zoom}" if include_points else "hexes only"
         print(
-            f"Building H3 tiles (zoom {min_zoom}-{max_zoom}, base_zoom = {base_zoom}, "
+            f"Building H3 tiles (zoom {min_zoom}-{max_zoom}, {point_info}, "
             f"{n} hex layer{'' if n == 1 else 's'}{suffix})..."
         )
 
@@ -226,6 +257,7 @@ def freestile_h3(
     con = duckdb.connect(db_path if db_path else ":memory:")
     try:
         points_gdf = _open_input(con, input, source_crs, quiet)
+        category_spec = _category_spec(con, category, category_values, agg_spec.names)
 
         layers: dict = {}
         for window in windows:
@@ -234,7 +266,7 @@ def freestile_h3(
                     f"  Aggregating H3 resolution {window.resolution} "
                     f"(zoom {window.min_zoom}-{window.max_zoom})..."
                 )
-            hex_gdf = _aggregate_resolution(con, window.resolution, agg_spec)
+            hex_gdf = _aggregate_resolution(con, window.resolution, agg_spec, category_spec)
             if len(hex_gdf) == 0:
                 if not quiet:
                     print(
@@ -246,13 +278,13 @@ def freestile_h3(
                 hex_gdf, min_zoom=window.min_zoom, max_zoom=window.max_zoom
             )
 
-        if points_gdf is None:
+        if include_points and points_gdf is None:
             points_gdf = _query_to_gdf(
                 con, "SELECT ST_AsWKB(geom) AS __wkb, * EXCLUDE (geom) FROM __h3_input"
             )
 
         points_min_zoom = max(min_zoom, base_zoom - fade_overlap) if fade else base_zoom
-        if points_min_zoom <= max_zoom:
+        if include_points and points_min_zoom <= max_zoom:
             # The Rust feature encoder needs at least one attribute column; if
             # the points are geometry-only, attach a trivial sequential id.
             if len(points_gdf.columns) <= 1:
@@ -349,6 +381,11 @@ def _parse_agg(agg) -> _AggSpec:
             "or a dict of (fn, column) tuples."
         )
 
+    reserved = {"h3", "h3_id", "h3_resolution", "__wkb", "__h3_crossing", "__boundary"}
+    if (any(not isinstance(n, str) or not n for n in names)
+            or len({n.lower() for n in names}) != len(names)
+            or any(n.lower() in reserved for n in names)):
+        raise ValueError("agg names must be nonempty, unique, and not reserved H3 fields.")
     quoted = [_quote_ident(n) for n in names]
     select_clause = ", ".join(f"{e} AS {q}" for e, q in zip(exprs, quoted))
     outer_select = ", ".join(quoted)
@@ -603,28 +640,140 @@ def _query_to_gdf(con, sql: str) -> gpd.GeoDataFrame:
     return gpd.GeoDataFrame(df, geometry=gpd.GeoSeries(geom, crs="EPSG:4326"))
 
 
-def _aggregate_resolution(con, resolution: int, agg_spec: _AggSpec) -> gpd.GeoDataFrame:
+def _aggregate_resolution(con, resolution: int, agg_spec: _AggSpec, category_spec=None) -> gpd.GeoDataFrame:
     resolution = int(resolution)
     if resolution < 0 or resolution > 15:
         raise ValueError("H3 resolution must be an integer in 0..15.")
 
-    sql = (
-        "WITH cells AS (\n"
-        f"  SELECT h3_latlng_to_cell(ST_Y(geom), ST_X(geom), {resolution}) AS h3, "
-        f"{agg_spec.select_clause}\n"
-        "  FROM __h3_input\n"
-        "  GROUP BY h3\n"
-        ")\n"
-        "SELECT\n"
-        "  ST_AsWKB(ST_GeomFromText(h3_cell_to_boundary_wkt(h3))) AS __wkb,\n"
-        "  h3_h3_to_string(h3) AS h3_id,\n"
-        f"  {agg_spec.outer_select}\n"
-        "FROM cells"
+    select = agg_spec.select_clause
+    if category_spec:
+        select += ", " + category_spec["select"]
+    con.execute(
+        "CREATE OR REPLACE TEMP TABLE __h3_cells AS SELECT "
+        f"h3_latlng_to_cell(ST_Y(geom), ST_X(geom), {resolution}) AS h3, "
+        f"{select} FROM __h3_input GROUP BY 1"
     )
-    return _split_antimeridian(_query_to_gdf(con, sql))
+    try:
+        integer_fields = _check_integer_fields(con, "__h3_cells", exclude={"h3"})
+        names = agg_spec.names + (category_spec["names"] if category_spec else [])
+        outer = ", ".join(
+            f"CAST({_quote_ident(n)} AS BIGINT) AS {_quote_ident(n)}"
+            if n in integer_fields else _quote_ident(n) for n in names
+        )
+        out = _query_to_gdf(con, (
+            "WITH boundaries AS (SELECT *, ST_GeomFromText(h3_cell_to_boundary_wkt(h3)) "
+            "AS __boundary FROM __h3_cells) SELECT ST_AsWKB(__boundary) AS __wkb, "
+            f"h3_h3_to_string(h3) AS h3_id, {resolution} AS h3_resolution, {outer}, "
+            "ST_XMax(__boundary) - ST_XMin(__boundary) > 180 AS __h3_crossing "
+            "FROM boundaries ORDER BY h3"
+        ))
+        crossing = [i for i, flag in enumerate(out.pop("__h3_crossing")) if flag]
+        for name in integer_fields:
+            out[name] = out[name].astype("Int64")
+        if category_spec:
+            out = _add_modes(out, category_spec["keys"], category_spec["labels"])
+        return _split_antimeridian(out, crossing)
+    finally:
+        con.execute("DROP TABLE IF EXISTS __h3_cells")
 
 
-def _split_antimeridian(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+def _validate_category(category, values):
+    if category is None:
+        if values is not None:
+            raise ValueError("category_values requires category.")
+        return
+    if not isinstance(category, str) or not category:
+        raise ValueError("category must be a single column name.")
+    if values is None:
+        return
+    if not isinstance(values, (list, tuple)) or len(values) > 64:
+        raise ValueError("category_values must contain at most 64 string or whole-number values.")
+    numeric = all(isinstance(v, Real) and not isinstance(v, bool) for v in values)
+    if not numeric and not all(isinstance(v, str) for v in values):
+        raise ValueError("category_values must be all strings or all whole numbers without nulls.")
+    if numeric and any(not math.isfinite(v) or v != int(v) or abs(v) > 2**53 - 1 for v in values):
+        raise ValueError("Numeric categories must be whole numbers within 2^53 - 1.")
+    keys = [str(int(v)) if numeric else v for v in values]
+    if (any(not k or k.lower() in ("_other", "_total") for k in keys)
+            or len({k.lower() for k in keys}) != len(keys)):
+        raise ValueError("Category values must be nonempty, unique (ignoring case), and not reserved _other/_total.")
+
+
+def _category_spec(con, category, values, agg_names):
+    if category is None:
+        return None
+    desc = dict((row[0], row[1]) for row in con.execute("DESCRIBE __h3_input").fetchall())
+    if category not in desc:
+        raise ValueError(f"Category column not found: {category}")
+    dtype = desc[category]
+    numeric = bool(re.match(r"^(U?(TINYINT|SMALLINT|INTEGER|BIGINT|HUGEINT)|FLOAT|REAL|DOUBLE|DECIMAL)", dtype))
+    if not numeric and not re.match(r"^(VARCHAR|ENUM)", dtype):
+        raise ValueError("Category column must be string or whole-number numeric.")
+    q = _quote_ident(category)
+    if numeric:
+        bad = con.execute(
+            f"SELECT COUNT(*) FROM __h3_input WHERE {q} IS NOT NULL AND "
+            f"(NOT isfinite({q}) OR {q} != trunc({q}) OR "
+            f"{q} NOT BETWEEN -9007199254740991 AND 9007199254740991)"
+        ).fetchone()[0]
+        if bad:
+            raise ValueError("Numeric categories must be whole numbers within 2^53 - 1.")
+    if values is None:
+        values = [row[0] for row in con.execute(
+            f"SELECT DISTINCT {q} FROM __h3_input WHERE {q} IS NOT NULL ORDER BY 1 LIMIT 65"
+        ).fetchall()]
+        # DECIMAL categories have already passed the SQL whole-number check.
+        if numeric:
+            values = [int(v) for v in values]
+    _validate_category(category, values)
+    if values and (isinstance(values[0], Real) != numeric):
+        raise ValueError("category_values must match the category column's type.")
+    labels = [str(int(v)) if numeric else v for v in values]
+    keys = [f"{category}:{v}" for v in labels + ["_other"]]
+    generated = ["point_count", *keys, "modal_category", "modal_count", "modal_share", "modal_tie"]
+    if set(n.lower() for n in agg_names) & set(n.lower() for n in generated):
+        raise ValueError("agg names collide with generated category fields.")
+    literals = labels if numeric else ["'" + v.replace("'", "''") + "'" for v in values]
+    counts = [f"COUNT(*) FILTER (WHERE {q} = {lit}) AS {_quote_ident(key)}"
+              for key, lit in zip(keys, literals)]
+    other = f"{q} IS NULL OR {q} NOT IN ({', '.join(literals)})" if values else "TRUE"
+    select = ", ".join(["COUNT(*) AS point_count", *counts,
+                        f"COUNT(*) FILTER (WHERE {other}) AS {_quote_ident(keys[-1])}"])
+    return dict(select=select, names=["point_count", *keys], keys=keys, labels=[*labels, "_other"])
+
+
+def _check_integer_fields(con, table, exclude=()):
+    fields = [row[0] for row in con.execute(f"DESCRIBE {_quote_ident(table)}").fetchall()
+              if re.match(r"^U?(TINYINT|SMALLINT|INTEGER|BIGINT|HUGEINT)$", row[1]) and row[0] not in exclude]
+    if fields:
+        checks = ", ".join(f"coalesce(bool_or({_quote_ident(n)} NOT BETWEEN "
+                           "-9007199254740991 AND 9007199254740991), FALSE)" for n in fields)
+        bad = con.execute(f"SELECT {checks} FROM {_quote_ident(table)}").fetchone()
+        if any(bad):
+            raise ValueError("Integer aggregate exceeds the supported exact range (2^53 - 1): "
+                             + ", ".join(n for n, b in zip(fields, bad) if b))
+    return fields
+
+
+def _add_modes(out, keys, labels):
+    import numpy as np
+    largest = np.full(len(out), -1, dtype=np.int64)
+    winner = np.zeros(len(out), dtype=np.int64)
+    ties = np.zeros(len(out), dtype=np.int64)
+    for i, key in enumerate(keys):
+        x = out[key].to_numpy(dtype=np.int64)
+        better = x > largest
+        ties = np.where(better, 1, ties + (x == largest))
+        winner[better] = i
+        largest = np.maximum(largest, x)
+    out["modal_category"] = [None if tie > 1 else labels[i] for i, tie in zip(winner, ties)]
+    out["modal_count"] = largest
+    out["modal_share"] = largest / out["point_count"].to_numpy(dtype=float)
+    out["modal_tie"] = ties > 1
+    return out
+
+
+def _split_antimeridian(gdf: gpd.GeoDataFrame, crossing=None) -> gpd.GeoDataFrame:
     """Split hex polygons that cross the antimeridian into a MultiPolygon.
 
     ``h3_cell_to_boundary_wkt`` returns raw cell boundaries: a cell crossing
@@ -639,9 +788,12 @@ def _split_antimeridian(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     from shapely import box
     from shapely.geometry import MultiPolygon
 
+    if crossing is None:
+        spans = shapely.bounds(gdf.geometry.values)
+        crossing = [i for i, b in enumerate(spans) if b[2] - b[0] > 180]
+    if not len(crossing):
+        return gdf
     geoms = list(gdf.geometry.values)
-    spans = shapely.bounds(gdf.geometry.values)  # (n, 4): minx, miny, maxx, maxy
-    changed = False
 
     def _shift_pos(coords):
         out = coords.copy()
@@ -653,11 +805,8 @@ def _split_antimeridian(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         out[:, 0] -= 360.0
         return out
 
-    for i, geom in enumerate(geoms):
-        minx, maxx = spans[i, 0], spans[i, 2]
-        if maxx - minx <= 180:
-            continue
-        changed = True
+    for i in crossing:
+        geom = geoms[i]
         shifted = shapely.transform(geom, _shift_pos)
         west = shifted.intersection(box(-180.0, -90.0, 180.0, 90.0))
         east = shifted.intersection(box(180.0, -90.0, 540.0, 90.0))
@@ -672,9 +821,6 @@ def _split_antimeridian(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
             elif part.geom_type == "MultiPolygon":
                 pieces.extend(part.geoms)
         geoms[i] = MultiPolygon(pieces) if pieces else geom
-
-    if not changed:
-        return gdf
 
     out = gdf.copy()
     out.geometry = gpd.GeoSeries(geoms, crs=gdf.crs, index=gdf.index)
