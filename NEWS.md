@@ -1,3 +1,9 @@
+# freestiler 0.2.1
+
+* macOS builds now use Rust's baseline deployment target for Rust and dependency
+  C objects instead of the host OS version. This prevents warnings when R links
+  for an older macOS version. Explicit user deployment targets are preserved.
+
 # freestiler 0.2.0
 
 * Thin (sub-pixel-width) polygons no longer flicker in and out across zoom
