@@ -1,5 +1,9 @@
 # freestiler 0.3.0
 
+* Requests for native features omitted from the CRAN build now explain how to
+  install from R-Universe, including the platform limits of Rust DuckDB and
+  streaming and the R DuckDB fallback.
+
 * Experimental ordered categorical clustering is available through
   `freestile_file()` in R and Python (`category`, `category_values`,
   `cluster_min_points`). It uses the pinned Supercluster 8.0.1/KDBush 4.1.0

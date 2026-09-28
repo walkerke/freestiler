@@ -15,7 +15,10 @@ freestiler is available on CRAN:
 install.packages("freestiler")
 ```
 
-For the full feature set powered by Rust DuckDB (MacOS and Linux only), install from [r-universe](https://walkerke.r-universe.dev):
+For GeoParquet input and categorical file clustering, install from
+[R-Universe](https://walkerke.r-universe.dev). This build also provides Rust
+DuckDB and streaming on macOS and Linux. On Windows, use the R `duckdb` backend
+for non-streaming queries. Restart R before replacing an existing installation:
 
 ```r
 install.packages(

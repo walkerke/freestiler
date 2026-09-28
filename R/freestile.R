@@ -349,7 +349,11 @@ freestile <- function(
 #' into the tiling engine. Input data in any coordinate reference system is
 #' automatically reprojected to WGS84 (EPSG:4326) before tiling.
 #'
-#' The GeoParquet engine requires compilation with `FREESTILER_GEOPARQUET=true`.
+#' The GeoParquet engine and categorical file clustering require GeoParquet
+#' support, available in the R-Universe build: `install.packages("freestiler", repos = c("https://walkerke.r-universe.dev",
+#' "https://cloud.r-project.org"))`. Restart R before reinstalling.
+#' Rust DuckDB and streaming are available on macOS and Linux; Windows uses
+#' the R `duckdb` backend for non-streaming queries.
 #' The DuckDB engine uses the Rust DuckDB backend when included in the build
 #' (enabled by default for native builds), or falls back to the R `duckdb`
 #' package. Control backend selection with
@@ -507,7 +511,7 @@ freestile_file <- function(
     )
 
     if (startsWith(result, "Error:")) {
-      stop(result, call. = FALSE)
+      .stop_native_error(result)
     }
 
     if (!quiet) {
@@ -560,7 +564,7 @@ freestile_file <- function(
   }
 
   if (startsWith(result, "Error:")) {
-    stop(result, call. = FALSE)
+    .stop_native_error(result)
   }
 
   if (!quiet) {
@@ -701,7 +705,9 @@ freestile_query <- function(
   if (backend == "r") {
     if (streaming == "always") {
       stop(
-        "Streaming mode is only available with the Rust DuckDB backend.",
+        "Streaming mode is only available with the Rust DuckDB backend.\n",
+        .runiverse_install_hint(duckdb = TRUE),
+        "\nAfter installing, select options(freestiler.duckdb_backend = \"auto\").",
         call. = FALSE
       )
     }
@@ -742,7 +748,7 @@ freestile_query <- function(
   )
 
   if (startsWith(result, "Error:")) {
-    stop(result, call. = FALSE)
+    .stop_native_error(result)
   }
 
   if (!quiet) {
@@ -784,8 +790,9 @@ freestile_query <- function(
   if (backend == "rust") {
     if (!.has_rust_duckdb()) {
       stop(
-        "Rust DuckDB backend requested but not available in this build. ",
-        "Install the r-universe build or rebuild from source with DuckDB enabled, or set ",
+        "Rust DuckDB support is not compiled into this freestiler build.\n",
+        .runiverse_install_hint(duckdb = TRUE),
+        "\nAlternatively, install.packages(c(\"duckdb\", \"DBI\")) and set ",
         "options(freestiler.duckdb_backend = \"auto\") to use the R fallback.",
         call. = FALSE
       )
@@ -809,9 +816,9 @@ freestile_query <- function(
   if (.has_r_duckdb()) return("r")
 
   stop(
-    "No DuckDB backend available. Either:\n",
-    "  - Install the r-universe build or rebuild from source with DuckDB enabled, or\n",
-    "  - Install the R duckdb package: install.packages(c(\"duckdb\", \"DBI\"))",
+    "No DuckDB backend is available in this installation.\n",
+    .runiverse_install_hint(duckdb = TRUE),
+    "\nAlternatively, install the R backend: install.packages(c(\"duckdb\", \"DBI\"))",
     call. = FALSE
   )
 }

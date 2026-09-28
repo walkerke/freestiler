@@ -33,6 +33,6 @@
     as.integer(min_zoom), as.integer(max_zoom), as.double(cluster_distance),
     as.integer(cluster_min_points), category,
     jsonlite::toJSON(unname(category_values), auto_unbox = FALSE, digits = NA), quiet)
-  if (startsWith(result, "Error:")) stop(result, call. = FALSE)
+  if (startsWith(result, "Error:")) .stop_native_error(result)
   invisible(structure(output, cluster_audit = jsonlite::fromJSON(result)))
 }

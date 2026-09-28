@@ -80,7 +80,11 @@ into the tiling engine. Input data in any coordinate reference system is
 automatically reprojected to WGS84 (EPSG:4326) before tiling.
 }
 \details{
-The GeoParquet engine requires compilation with \code{FREESTILER_GEOPARQUET=true}.
+The GeoParquet engine and categorical file clustering require GeoParquet
+support, available in the R-Universe build: \code{install.packages("freestiler", repos = c("https://walkerke.r-universe.dev",
+"https://cloud.r-project.org"))}. Restart R before reinstalling.
+Rust DuckDB and streaming are available on macOS and Linux; Windows uses
+the R \code{duckdb} backend for non-streaming queries.
 The DuckDB engine uses the Rust DuckDB backend when included in the build
 (enabled by default for native builds), or falls back to the R \code{duckdb}
 package. Control backend selection with
