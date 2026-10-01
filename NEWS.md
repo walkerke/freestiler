@@ -3,7 +3,6 @@
 * Requests for native features omitted from the CRAN build now explain how to
   install from R-Universe, including the platform limits of Rust DuckDB and
   streaming and the R DuckDB fallback.
-
 * Experimental ordered categorical clustering is available through
   `freestile_file()` in R and Python (`category`, `category_values`,
   `cluster_min_points`). It uses the pinned Supercluster 8.0.1/KDBush 4.1.0
@@ -16,7 +15,6 @@
   and `FREESTILER_CLUSTER_TILE_BUDGET_MB` (default 256) guards decoded tile buffers
   and the tile-coordinate index. Numeric/string-union abbreviation fields are
   omitted from TileJSON's single-type field map.
-
 * `freestile_h3()` now supports aggregate-only archives with
   `include_points = FALSE`, covering the complete requested zoom range without
   fetching a raw-point frame. Optional `category` and `category_values` add
@@ -31,6 +29,8 @@
   types, with a `field_order` extension preserving requested property order.
   `view_h3_tiles()` defaults to `point_count` for categorical output and skips
   H3 bookkeeping fields when choosing a numeric aggregate.
+
+# freestiler 0.2.0
 
 * The streaming point pipeline (`freestile_query()`) now partitions the query
   result on disk and tiles each partition independently instead of sorting
