@@ -883,20 +883,43 @@ freestile_query <- function(
   }
   geom_col <- desc$column_name[geom_idx[1L]]
 
-  # Build WKB query with reprojection when source CRS is known and not 4326
-  needs_transform <- !is.null(source_crs) && source_crs != "EPSG:4326"
+  # Format query timestamps before DBI converts them to POSIXct. Keep this
+  # consistent with the native reader without changing freestile(sf) behavior.
+  geom_ident <- as.character(DBI::dbQuoteIdentifier(con, geom_col))
+  prop_select <- paste0("* EXCLUDE (", geom_ident, ")")
+  timestamp_cols <- which(grepl("^TIMESTAMP", toupper(desc$column_type)))
+  if (length(timestamp_cols)) {
+    replacements <- vapply(timestamp_cols, function(i) {
+      ident <- as.character(DBI::dbQuoteIdentifier(con, desc$column_name[i]))
+      dtype <- toupper(desc$column_type[i])
+      if (dtype %in% c("TIMESTAMP WITH TIME ZONE", "TIMESTAMPTZ")) {
+        # Epoch microseconds represent UTC without the optional ICU extension.
+        expr <- paste0(
+          "CASE WHEN isfinite(", ident, ") THEN replace(CAST(make_timestamp(epoch_us(",
+          ident, ")) AS VARCHAR), ' ', 'T') || 'Z' ELSE CAST(",
+          ident, " AS VARCHAR) END"
+        )
+      } else {
+        expr <- paste0("replace(CAST(", ident, " AS VARCHAR), ' ', 'T')")
+      }
+      paste0(expr, " AS ", ident)
+    }, character(1))
+    prop_select <- paste0(prop_select, " REPLACE (", paste(replacements, collapse = ", "), ")")
+  }
 
-  if (needs_transform) {
-    wrapped_sql <- sprintf(
-      "SELECT * EXCLUDE (\"%s\"), ST_AsWKB(ST_Transform(\"%s\", '%s', 'EPSG:4326', always_xy := true)) AS __wkb FROM (%s) AS __t",
-      geom_col, geom_col, source_crs, sql
+  # Build WKB query with reprojection when source CRS is known and not 4326.
+  if (source_crs != "EPSG:4326") {
+    geom_expr <- sprintf(
+      "ST_Transform(%s, %s, 'EPSG:4326', always_xy := true)",
+      geom_ident, as.character(DBI::dbQuoteString(con, source_crs))
     )
   } else {
-    wrapped_sql <- sprintf(
-      "SELECT * EXCLUDE (\"%s\"), ST_AsWKB(\"%s\") AS __wkb FROM (%s) AS __t",
-      geom_col, geom_col, sql
-    )
+    geom_expr <- geom_ident
   }
+  wrapped_sql <- sprintf(
+    "SELECT %s, ST_AsWKB(%s) AS __wkb FROM (%s) AS __t",
+    prop_select, geom_expr, sql
+  )
 
   df <- DBI::dbGetQuery(con, wrapped_sql)
 

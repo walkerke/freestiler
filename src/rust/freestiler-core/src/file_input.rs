@@ -508,12 +508,12 @@ pub use geoparquet_impl::parquet_to_layers;
 pub use geoparquet_impl::ParquetPointSource;
 
 /// SQL text transport for temporal and other non-numeric properties. Zoned
-/// timestamps use UTC regardless of the connection's TimeZone setting.
+/// timestamps use UTC regardless of the connection's TimeZone setting, without ICU.
 #[cfg(feature = "duckdb")]
 pub(crate) fn duckdb_text_expr(ident: &str, dtype: &str) -> String {
     let dt = dtype.trim().to_uppercase();
     if matches!(dt.as_str(), "TIMESTAMP WITH TIME ZONE" | "TIMESTAMPTZ") {
-        format!("CASE WHEN isfinite({ident}) THEN replace(CAST(({ident} AT TIME ZONE 'UTC') AS VARCHAR), ' ', 'T') || 'Z' ELSE CAST({ident} AS VARCHAR) END")
+        format!("CASE WHEN isfinite({ident}) THEN replace(CAST(make_timestamp(epoch_us({ident})) AS VARCHAR), ' ', 'T') || 'Z' ELSE CAST({ident} AS VARCHAR) END")
     } else if dt.starts_with("TIMESTAMP") {
         format!("replace(CAST({ident} AS VARCHAR), ' ', 'T')")
     } else {

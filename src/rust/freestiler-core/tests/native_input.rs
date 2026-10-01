@@ -173,8 +173,13 @@ const TEMPORAL_QUERY: &str = "SELECT ST_Point(-80,35) AS geom, d AS \"survey dat
 #[cfg(feature = "duckdb")]
 #[test]
 fn duckdb_temporal_properties_survive_mvt() {
-    for zone in ["UTC", "America/Chicago"] {
-        let sql = format!("SET TimeZone = '{zone}'; {TEMPORAL_QUERY}");
+    for setup in [
+        "SET TimeZone = 'UTC'",
+        "SET TimeZone = 'America/Chicago'",
+        // Fresh connections do not load ICU; prevent downloading or loading it.
+        "SET autoinstall_known_extensions = false; SET autoload_known_extensions = false",
+    ] {
+        let sql = format!("{setup}; {TEMPORAL_QUERY}");
         let layers =
             freestiler_core::file_input::duckdb_query_to_layers(None, &sql, "dates", 0, 0).unwrap();
         let decoded = encode_decode(&layers[0]);

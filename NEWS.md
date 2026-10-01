@@ -7,7 +7,9 @@
   as ISO 8601 text instead of silently replacing them with nulls (#18).
   Timestamps use a `T` separator; zoned timestamps are normalized to UTC
   with a `Z` suffix, independent of the DuckDB session time zone. Genuine
-  nulls remain null.
+  nulls remain null. The R DuckDB fallback uses the same timestamp format;
+  direct `freestile()` calls on sf objects retain their existing behavior.
+  Formatting zoned query timestamps does not require DuckDB's ICU extension.
 * Rust DuckDB queries now export geometry only as WKB, fixing failures with
   CRS-tagged geometry such as `ST_Read()` shapefiles (#19). CRS-tagged query
   results are now automatically reprojected to WGS84, including streaming
