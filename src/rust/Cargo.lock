@@ -1017,6 +1017,7 @@ name = "freestiler-core"
 version = "0.1.0"
 dependencies = [
  "arrow-array 57.3.0",
+ "arrow-cast 57.3.0",
  "arrow-schema 57.3.0",
  "duckdb",
  "fastpfor",

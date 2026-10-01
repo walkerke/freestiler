@@ -1174,7 +1174,7 @@ impl PreparedPointQuery {
 
         let geom_col_sql = quote_ident(&geom_col_name);
         let srid_sql = format!(
-            "SELECT ST_SRID({}) AS __srid FROM ({}) AS __freestiler_src WHERE {} IS NOT NULL LIMIT 1",
+            "SELECT ST_CRS({}) AS __srid FROM ({}) AS __freestiler_src WHERE {} IS NOT NULL LIMIT 1",
             geom_col_sql, sql, geom_col_sql
         );
         let source_srid: Option<String> = conn
@@ -1184,7 +1184,7 @@ impl PreparedPointQuery {
         let geom_expr = match source_srid.as_deref() {
             None | Some("EPSG:4326") | Some("") => geom_col_sql.clone(),
             Some(src_crs) => format!(
-                "ST_Transform({}, {}, 'EPSG:4326')",
+                "ST_Transform({}, {}, 'EPSG:4326', always_xy := true)",
                 geom_col_sql,
                 quote_string(src_crs)
             ),
@@ -1216,7 +1216,15 @@ impl PreparedPointQuery {
                 ", {}",
                 self.prop_names
                     .iter()
-                    .map(|name| quote_ident(name))
+                    .zip(self.prop_value_kinds.iter())
+                    .map(|(name, kind)| {
+                        let ident = quote_ident(name);
+                        if matches!(kind, DuckDbValueKind::String) {
+                            format!("CAST({ident} AS VARCHAR) AS {ident}")
+                        } else {
+                            ident
+                        }
+                    })
                     .collect::<Vec<_>>()
                     .join(", ")
             )

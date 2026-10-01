@@ -3,6 +3,13 @@
 * Requests for native features omitted from the CRAN build now explain how to
   install from R-Universe, including the platform limits of Rust DuckDB and
   streaming and the R DuckDB fallback.
+* Native GeoParquet and DuckDB readers preserve DATE and timestamp properties
+  as text instead of silently replacing them with nulls (#18). Zoned
+  GeoParquet timestamps are displayed in UTC; genuine nulls remain null.
+* Rust DuckDB queries now export geometry only as WKB, fixing failures with
+  CRS-tagged geometry such as `ST_Read()` shapefiles (#19). CRS detection and
+  reprojection now use `ST_CRS()` and longitude/latitude axis order, including
+  streaming queries.
 * Experimental ordered categorical clustering is available through
   `freestile_file()` in R and Python (`category`, `category_values`,
   `cluster_min_points`). It uses the pinned Supercluster 8.0.1/KDBush 4.1.0

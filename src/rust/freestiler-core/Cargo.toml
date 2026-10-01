@@ -12,7 +12,7 @@ publish = false
 
 [features]
 default = []
-geoparquet = ["dep:parquet", "dep:arrow-array", "dep:arrow-schema", "dep:geozero"]
+geoparquet = ["dep:parquet", "dep:arrow-array", "dep:arrow-schema", "dep:arrow-cast", "dep:geozero"]
 duckdb = ["dep:duckdb", "dep:geozero"]
 fastpfor = ["dep:fastpfor"]
 fsst = ["dep:fsst-rs"]
@@ -54,6 +54,7 @@ jobserver = "=0.1.32"
 parquet = { version = "57", optional = true, default-features = false, features = ["arrow", "snap"] }
 arrow-array = { version = "57", optional = true }
 arrow-schema = { version = "57", optional = true }
+arrow-cast = { version = "57", optional = true }
 
 # WKB geometry parsing (shared by geoparquet and duckdb features)
 geozero = { version = "0.13", optional = true, features = ["with-wkb", "with-geo"] }
