@@ -1,5 +1,7 @@
 pub mod clip;
 pub mod cluster;
+pub mod cluster_output;
+pub mod categorical_cluster;
 pub mod coalesce;
 pub mod drop;
 pub mod engine;
@@ -10,6 +12,7 @@ pub mod mvt;
 pub mod pmtiles_writer;
 pub mod quantize;
 pub mod simplify;
+pub mod supercluster;
 #[cfg(feature = "duckdb")]
 pub mod streaming;
 pub mod tiler;

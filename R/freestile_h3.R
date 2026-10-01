@@ -6,6 +6,10 @@
 #' individual points. Aggregations (count, sum, mean, etc.) are computed in
 #' DuckDB via the H3 community extension; the function then assembles the
 #' per-resolution hex layers and the raw-point layer via [freestile()].
+#' Set `include_points = FALSE` to build only hexagons, for example when an
+#' existing point archive supplies the close-up view. Aggregation happens in
+#' DuckDB, but all resulting hex layers are still materialized for tiling;
+#' this is not a bounded-memory polygon pipeline.
 #'
 #' Each distinct H3 resolution becomes its own MVT source-layer (named
 #' `"<hex_layer_prefix>_r<resolution>"`, e.g. `"h3_r05"`); raw points are
@@ -60,7 +64,8 @@
 #' @param h3_resolutions Optional override of the zoom -> H3 resolution
 #'   mapping. Accepts `NULL` (use built-in defaults), an unnamed integer
 #'   vector with `length(min_zoom:(base_zoom - 1L))` entries mapped
-#'   positionally, or a named integer vector with names that parse to integer
+#'   positionally (`length(min_zoom:max_zoom)` for aggregate-only output),
+#'   or a named integer vector with names that parse to integer
 #'   zoom levels (sparse overrides; defaults fill the rest). All resolutions
 #'   must be integers in `0:15`. The same resolution appearing in
 #'   non-contiguous zoom runs (e.g. zooms 4--5 and 8) is rejected.
@@ -80,6 +85,20 @@
 #' @param overwrite Logical. Whether to overwrite an existing output file
 #'   (default `TRUE`).
 #' @param quiet Logical. Suppress progress messages (default `FALSE`).
+#' @param include_points Logical. Include the raw-point layer (default `TRUE`).
+#'   Set `FALSE` for aggregate-only output over the complete `min_zoom:max_zoom`
+#'   range; `base_zoom` must then be `NULL`, and positional `h3_resolutions`
+#'   must cover that complete range. Hex geometries are still held in memory.
+#' @param category Optional categorical column to summarize. Adds `point_count`,
+#'   per-category counts named `"<category>:<value>"`, and `modal_category`,
+#'   `modal_count`, `modal_share`, and `modal_tie`. Ties have no selected category.
+#' @param category_values Optional character or whole-number category dictionary
+#'   (at most 64 values). If `NULL`, infer it from the input. NULL and unlisted
+#'   values contribute to `<category>:_other`, including in the mode. `_other`
+#'   and `_total` are reserved. Counts are checked for exact integer transport
+#'   up to 2^53 - 1; these are counts of input records, not weighted totals.
+#'   Category labels must be unique ignoring case. Modal labels are strings,
+#'   even for numeric categories; tied labels are missing in the encoded tile.
 #'
 #' @return The output file path (invisibly).
 #'
@@ -103,6 +122,12 @@
 #'   agg = "count",
 #'   min_zoom = 2, max_zoom = 12, base_zoom = 10,
 #'   fade = TRUE)
+#'
+#' # Categorical hexes only; all category counts remain available for styling.
+#' pts$group <- sample(c("a", "b", "c"), nrow(pts), replace = TRUE)
+#' freestile_h3(pts, "groups.pmtiles", include_points = FALSE,
+#'   category = "group", category_values = c("a", "b", "c"),
+#'   min_zoom = 3, max_zoom = 8)
 #' }
 #'
 #' @seealso [freestile()], [view_h3_tiles()]
@@ -123,7 +148,10 @@ freestile_h3 <- function(
     fade = FALSE,
     fade_overlap = 1L,
     overwrite = TRUE,
-    quiet = FALSE
+    quiet = FALSE,
+    include_points = TRUE,
+    category = NULL,
+    category_values = NULL
 ) {
   tile_format <- match.arg(tile_format, c("mvt", "mlt"))
 
@@ -134,7 +162,14 @@ freestile_h3 <- function(
       call. = FALSE)
   }
 
-  base_zoom <- .h3_resolve_base_zoom(base_zoom, min_zoom, max_zoom)
+  if (!is.logical(include_points) || length(include_points) != 1L || is.na(include_points)) {
+    stop("`include_points` must be a single TRUE or FALSE.", call. = FALSE)
+  }
+  if (!include_points && !is.null(base_zoom)) {
+    stop("`base_zoom` must be NULL when `include_points = FALSE`.", call. = FALSE)
+  }
+  .h3_validate_category(category, category_values)
+  base_zoom <- if (include_points) .h3_resolve_base_zoom(base_zoom, min_zoom, max_zoom) else max_zoom + 1L
 
   if (!is.logical(fade) || length(fade) != 1L || is.na(fade)) {
     stop("`fade` must be a single TRUE or FALSE.", call. = FALSE)
@@ -167,8 +202,9 @@ freestile_h3 <- function(
 
   if (!quiet) {
     message(sprintf(
-      "Building H3 tiles (zoom %d-%d, base_zoom = %d, %d hex layer%s%s)...",
-      min_zoom, max_zoom, base_zoom,
+      "Building H3 tiles (zoom %d-%d, %s, %d hex layer%s%s)...",
+      min_zoom, max_zoom,
+      if (include_points) sprintf("base_zoom = %d", base_zoom) else "hexes only",
       nrow(windows),
       if (nrow(windows) == 1L) "" else "s",
       if (fade) sprintf(", fade overlap = %d", fade_overlap) else ""
@@ -179,6 +215,7 @@ freestile_h3 <- function(
   ctx <- .h3_open_input(input, source_crs, db_path, quiet = quiet)
   con <- ctx$con
   on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
+  category_spec <- .h3_category_spec(con, category, category_values, agg_spec$names)
 
   # Per-resolution hex aggregation.
   layers <- list()
@@ -193,7 +230,7 @@ freestile_h3 <- function(
         message(sprintf("  Aggregating H3 resolution %d (zoom %d-%d)...",
           r, mn, mx))
       }
-      hex_sf <- .h3_aggregate_resolution(con, r, agg_spec)
+      hex_sf <- .h3_aggregate_resolution(con, r, agg_spec, category_spec)
       if (nrow(hex_sf) == 0L) {
         if (!quiet) {
           message(sprintf("    (no features at resolution %d; skipping layer)", r))
@@ -206,7 +243,7 @@ freestile_h3 <- function(
 
   # Raw-point layer.
   points_sf <- ctx$points_sf
-  if (is.null(points_sf)) {
+  if (include_points && is.null(points_sf)) {
     # SQL input: read points from the temp view
     points_sf <- .h3_query_to_sf(
       con,
@@ -215,7 +252,7 @@ freestile_h3 <- function(
   }
   points_min_zoom <- if (fade) max(min_zoom, base_zoom - fade_overlap) else base_zoom
   points_max_zoom <- max_zoom
-  if (points_min_zoom <= points_max_zoom) {
+  if (include_points && points_min_zoom <= points_max_zoom) {
     # The Rust feature parser requires at least one attribute column. If the
     # input sf is geometry-only, attach a trivial sequential id so MVT
     # encoding has something to write.
@@ -264,8 +301,10 @@ freestile_h3 <- function(
 #'
 #' @param input Path to a local `.pmtiles` file produced by [freestile_h3()].
 #' @param agg_column Character or NULL. Aggregation column to drive the hex
-#'   color scale. If `NULL`, the first non-`h3_id` numeric field in the
-#'   metadata is used.
+#'   color scale. If `NULL`, categorical archives use `point_count`; otherwise
+#'   the first requested numeric aggregate is used. Older archives keep their
+#'   original field-order fallback. This is a numeric quick-look viewer;
+#'   categorical colors can be styled with [mapgl::add_fill_layer()].
 #' @param stops List with `values` and `colors` (equal length, sorted by
 #'   `values`) defining the shared color scale across all hex layers. If
 #'   `NULL`, the documented quick-look default is used.
@@ -377,20 +416,7 @@ view_h3_tiles <- function(
 
   # Determine agg_column from metadata if not specified
   if (is.null(agg_column) && length(hex_layers) > 0L) {
-    fields <- hex_layers[[1L]]$fields
-    candidates <- setdiff(names(fields), "h3_id")
-    numeric_idx <- vapply(
-      candidates,
-      function(n) isTRUE(grepl("Number|Integer|Float|Double",
-        as.character(fields[[n]]), ignore.case = TRUE)),
-      logical(1)
-    )
-    numeric_candidates <- candidates[numeric_idx]
-    if (length(numeric_candidates) > 0L) {
-      agg_column <- numeric_candidates[1L]
-    } else if (length(candidates) > 0L) {
-      agg_column <- candidates[1L]
-    }
+    agg_column <- .h3_default_agg_column(hex_layers[[1L]])
   }
 
   if (is.null(stops)) {
@@ -777,6 +803,11 @@ view_h3_tiles <- function(
   }
 
   pairs <- to_pairs(agg)
+  reserved <- c("h3", "h3_id", "h3_resolution", "__wkb", "__h3_crossing", "__boundary")
+  if (!length(pairs$names) || anyNA(pairs$names) || any(!nzchar(pairs$names)) ||
+      anyDuplicated(tolower(pairs$names)) || any(tolower(pairs$names) %in% reserved)) {
+    stop("`agg` names must be nonempty, unique, and not reserved H3 fields.", call. = FALSE)
+  }
 
   # Quote identifiers for SQL.
   quoted_names <- vapply(pairs$names, .h3_quote_ident, character(1))
@@ -811,9 +842,9 @@ view_h3_tiles <- function(
   }
 
   con <- if (is.null(db_path) || identical(db_path, "")) {
-    DBI::dbConnect(duckdb::duckdb())
+    DBI::dbConnect(duckdb::duckdb(), bigint = "numeric")
   } else {
-    DBI::dbConnect(duckdb::duckdb(), dbdir = db_path)
+    DBI::dbConnect(duckdb::duckdb(), dbdir = db_path, bigint = "numeric")
   }
 
   ok <- FALSE
@@ -933,7 +964,7 @@ view_h3_tiles <- function(
       geom_col_name, geom_select
     ))
 
-    # Validate geometry types via a small sample.
+    # DISTINCT validates the complete view, not just ten input rows.
     gtypes <- DBI::dbGetQuery(con,
       "SELECT DISTINCT ST_GeometryType(geom) AS gt FROM __h3_input LIMIT 10")
     if (nrow(gtypes) == 0L) {
@@ -1004,32 +1035,163 @@ view_h3_tiles <- function(
 
 #' Run the per-resolution H3 aggregation and return an sf
 #' @noRd
-.h3_aggregate_resolution <- function(con, resolution, agg_spec) {
+.h3_aggregate_resolution <- function(con, resolution, agg_spec, category_spec = NULL) {
   resolution <- as.integer(resolution)
   if (length(resolution) != 1L || is.na(resolution) || resolution < 0L ||
       resolution > 15L) {
     stop("H3 resolution must be a single integer in 0..15.", call. = FALSE)
   }
 
-  sql <- sprintf(
-    paste0(
-      "WITH cells AS (\n",
-      "  SELECT h3_latlng_to_cell(ST_Y(geom), ST_X(geom), %d) AS h3, %s\n",
-      "  FROM __h3_input\n",
-      "  GROUP BY h3\n",
-      ")\n",
-      "SELECT\n",
-      "  ST_AsWKB(ST_GeomFromText(h3_cell_to_boundary_wkt(h3))) AS __wkb,\n",
-      "  h3_h3_to_string(h3) AS h3_id,\n",
-      "  %s\n",
-      "FROM cells"
-    ),
-    resolution,
-    agg_spec$select_clause,
-    agg_spec$outer_select
-  )
+  select <- paste(c(agg_spec$select_clause, category_spec$select), collapse = ", ")
+  # Materialize only finalized cells, once per resolution. This lets the range
+  # check precede host conversion without running the source aggregation twice.
+  DBI::dbExecute(con, sprintf(paste0(
+    "CREATE OR REPLACE TEMP TABLE __h3_cells AS SELECT ",
+    "h3_latlng_to_cell(ST_Y(geom), ST_X(geom), %d) AS h3, %s ",
+    "FROM __h3_input GROUP BY 1"), resolution, select))
+  on.exit(DBI::dbExecute(con, "DROP TABLE IF EXISTS __h3_cells"), add = TRUE)
+  integer_fields <- .h3_check_integer_fields(con, "__h3_cells", exclude = "h3")
+  names <- c(agg_spec$names, category_spec$names)
+  outer <- paste(vapply(names, function(n) {
+    q <- .h3_quote_ident(n)
+    if (n %in% integer_fields) sprintf("CAST(%s AS BIGINT) AS %s", q, q) else q
+  }, character(1)), collapse = ", ")
+  sql <- sprintf(paste0(
+    "WITH boundaries AS (SELECT *, ST_GeomFromText(h3_cell_to_boundary_wkt(h3)) AS __boundary FROM __h3_cells) ",
+    "SELECT ST_AsWKB(__boundary) AS __wkb, h3_h3_to_string(h3) AS h3_id, ",
+    "%d AS h3_resolution, %s, ST_XMax(__boundary) - ST_XMin(__boundary) > 180 AS __h3_crossing ",
+    "FROM boundaries ORDER BY h3"), resolution, outer)
+  out <- .h3_query_to_sf(con, sql)
+  crossing <- which(out[["__h3_crossing"]])
+  out[["__h3_crossing"]] <- NULL
+  for (n in integer_fields) {
+    x <- out[[n]]
+    if (all(is.na(x) | (x > -.Machine$integer.max - 1 & x <= .Machine$integer.max))) {
+      out[[n]] <- as.integer(x)
+    } else {
+      attr(x, "freestiler_integer") <- TRUE
+      out[[n]] <- x
+    }
+  }
+  if (!is.null(category_spec)) out <- .h3_add_modes(out, category_spec$keys, category_spec$labels)
+  .h3_split_antimeridian(out, crossing)
+}
 
-  .h3_split_antimeridian(.h3_query_to_sf(con, sql))
+.h3_validate_category <- function(category, values) {
+  if (is.null(category)) {
+    if (!is.null(values)) stop("`category_values` requires `category`.", call. = FALSE)
+    return(invisible(NULL))
+  }
+  if (!is.character(category) || length(category) != 1L || is.na(category) || !nzchar(category)) {
+    stop("`category` must be a single column name.", call. = FALSE)
+  }
+  if (is.null(values)) return(invisible(NULL))
+  if (is.factor(values)) values <- as.character(values)
+  if (!(is.character(values) || is.numeric(values)) || length(values) > 64L || anyNA(values)) {
+    stop("`category_values` must contain at most 64 character or whole-number values without NA.", call. = FALSE)
+  }
+  if (is.numeric(values) && any(!is.finite(values) | values != trunc(values) | abs(values) > 2^53 - 1)) {
+    stop("Numeric categories must be whole numbers within 2^53 - 1.", call. = FALSE)
+  }
+  keys <- if (is.numeric(values)) sprintf("%.0f", values) else values
+  if (any(!nzchar(keys)) || any(tolower(keys) %in% c("_other", "_total")) || anyDuplicated(tolower(keys))) {
+    stop("Category values must be nonempty, unique (ignoring case), and not reserved _other/_total.", call. = FALSE)
+  }
+  invisible(NULL)
+}
+
+.h3_category_spec <- function(con, category, values, agg_names) {
+  if (is.null(category)) return(NULL)
+  desc <- DBI::dbGetQuery(con, "DESCRIBE __h3_input")
+  dtype <- desc$column_type[match(category, desc$column_name)]
+  if (is.na(dtype)) stop("Category column not found: ", category, call. = FALSE)
+  numeric_type <- grepl("^(U?(TINYINT|SMALLINT|INTEGER|BIGINT|HUGEINT)|FLOAT|REAL|DOUBLE|DECIMAL)", dtype)
+  string_type <- grepl("^(VARCHAR|ENUM)", dtype)
+  if (!numeric_type && !string_type) stop("Category column must be character or whole-number numeric.", call. = FALSE)
+  q <- .h3_quote_ident(category)
+  if (numeric_type) {
+    bad <- DBI::dbGetQuery(con, sprintf(paste0(
+      "SELECT COUNT(*) AS n FROM __h3_input WHERE %s IS NOT NULL AND ",
+      "(NOT isfinite(%s) OR %s != trunc(%s) OR %s NOT BETWEEN -9007199254740991 AND 9007199254740991)"), q, q, q, q, q))$n
+    if (bad > 0) stop("Numeric categories must be whole numbers within 2^53 - 1.", call. = FALSE)
+  }
+  if (is.null(values)) {
+    values <- DBI::dbGetQuery(con, sprintf(
+      "SELECT DISTINCT %s AS value FROM __h3_input WHERE %s IS NOT NULL ORDER BY 1 LIMIT 65", q, q))$value
+  }
+  if (is.factor(values)) values <- as.character(values)
+  .h3_validate_category(category, values)
+  if (length(values) && (is.numeric(values) != numeric_type)) {
+    stop("`category_values` must match the category column's type.", call. = FALSE)
+  }
+  labels <- if (is.numeric(values)) sprintf("%.0f", values) else values
+  keys <- paste0(category, ":", c(labels, "_other"))
+  generated <- c("point_count", keys, "modal_category", "modal_count", "modal_share", "modal_tie")
+  if (any(tolower(agg_names) %in% tolower(generated))) {
+    stop("`agg` names collide with generated category fields.", call. = FALSE)
+  }
+  literals <- if (is.numeric(values)) labels else paste0("'", gsub("'", "''", values, fixed = TRUE), "'")
+  counts <- vapply(seq_along(values), function(i) sprintf(
+    "COUNT(*) FILTER (WHERE %s = %s) AS %s", q, literals[i], .h3_quote_ident(keys[i])), character(1))
+  other <- if (length(values)) sprintf("%s IS NULL OR %s NOT IN (%s)", q, q, paste(literals, collapse = ", ")) else "TRUE"
+  list(
+    select = paste(c("COUNT(*) AS point_count", counts,
+      sprintf("COUNT(*) FILTER (WHERE %s) AS %s", other, .h3_quote_ident(utils::tail(keys, 1)))), collapse = ", "),
+    names = c("point_count", keys), keys = keys, labels = c(labels, "_other")
+  )
+}
+
+.h3_check_integer_fields <- function(con, table, exclude = character()) {
+  desc <- DBI::dbGetQuery(con, paste("DESCRIBE", .h3_quote_ident(table)))
+  fields <- setdiff(desc$column_name[grepl("^U?(TINYINT|SMALLINT|INTEGER|BIGINT|HUGEINT)$", desc$column_type)], exclude)
+  if (length(fields)) {
+    checks <- vapply(fields, function(n) sprintf(
+      "coalesce(bool_or(%s NOT BETWEEN -9007199254740991 AND 9007199254740991), FALSE)",
+      .h3_quote_ident(n)), character(1))
+    bad <- unlist(DBI::dbGetQuery(con, paste("SELECT", paste(checks, collapse = ", "), "FROM", .h3_quote_ident(table))))
+    if (any(bad)) stop("Integer aggregate exceeds the supported exact range (2^53 - 1): ",
+      paste(fields[bad], collapse = ", "), call. = FALSE)
+  }
+  fields
+}
+
+.h3_add_modes <- function(out, keys, labels) {
+  n <- nrow(out)
+  largest <- rep(-1, n)
+  winner <- integer(n)
+  ties <- integer(n)
+  for (i in seq_along(keys)) {
+    x <- out[[keys[i]]]
+    better <- x > largest
+    ties <- ifelse(better, 1L, ties + as.integer(x == largest))
+    winner[better] <- i
+    largest <- pmax(largest, x)
+  }
+  out$modal_category <- labels[winner]
+  out$modal_category[ties > 1L] <- NA_character_
+  if (all(largest <= .Machine$integer.max)) largest <- as.integer(largest) else attr(largest, "freestiler_integer") <- TRUE
+  out$modal_count <- largest
+  out$modal_share <- as.numeric(largest) / out$point_count
+  out$modal_tie <- ties > 1L
+  out
+}
+
+.h3_default_agg_column <- function(layer) {
+  fields <- layer$fields
+  # Preserve the old auto-selection for pre-typed archives from earlier builds.
+  if (is.null(layer$field_order) && !any(c("h3_resolution", "modal_tie") %in% names(fields))) {
+    candidates <- setdiff(names(fields), "h3_id")
+    numeric <- candidates[vapply(candidates, function(n)
+      isTRUE(grepl("Number|Integer|Float|Double", as.character(fields[[n]]), ignore.case = TRUE)), logical(1))]
+    return(if (length(numeric)) numeric[1L] else if (length(candidates)) candidates[1L] else NULL)
+  }
+  ordered <- unique(c(layer$field_order, names(fields)))
+  candidates <- ordered[ordered %in% names(fields) & !grepl(":", ordered, fixed = TRUE)]
+  candidates <- setdiff(candidates, c("h3_id", "h3_resolution", "modal_category", "modal_count", "modal_share", "modal_tie"))
+  if ("point_count" %in% candidates) return("point_count")
+  numeric <- candidates[vapply(candidates, function(n)
+    isTRUE(grepl("Number|Integer|Float|Double", as.character(fields[[n]]), ignore.case = TRUE)), logical(1))]
+  if (length(numeric)) numeric[1L] else if (length(candidates)) candidates[1L] else NULL
 }
 
 #' Split hex polygons that cross the antimeridian
@@ -1042,15 +1204,18 @@ view_h3_tiles <- function(
 #' [sf::st_wrap_dateline()]. Cells containing a pole get the same treatment
 #' and render approximately (the polar cap itself is not filled).
 #' @noRd
-.h3_split_antimeridian <- function(hex_sf) {
+.h3_split_antimeridian <- function(hex_sf, crossing = NULL) {
   geom <- sf::st_geometry(hex_sf)
   if (length(geom) == 0L) {
     return(hex_sf)
   }
 
-  coords <- sf::st_coordinates(geom)
-  spans <- tapply(coords[, "X"], coords[, "L2"], function(x) max(x) - min(x))
-  crossing <- as.integer(names(spans)[spans > 180])
+  if (is.null(crossing)) {
+    crossing <- which(vapply(geom, function(g) {
+      b <- sf::st_bbox(g)
+      b[["xmax"]] - b[["xmin"]] > 180
+    }, logical(1)))
+  }
   if (length(crossing) == 0L) {
     return(hex_sf)
   }
@@ -1061,17 +1226,15 @@ view_h3_tiles <- function(
     sf::st_polygon(list(ring))
   })
   wrapped <- sf::st_wrap_dateline(
-    sf::st_sfc(shifted, crs = sf::st_crs(geom))
+    sf::st_sfc(shifted, crs = sf::st_crs(geom)),
+    options = c("WRAPDATELINE=YES", "DATELINEOFFSET=180")
   )
 
   glist <- unclass(geom)
   for (k in seq_along(crossing)) {
     glist[[crossing[k]]] <- wrapped[[k]]
   }
-  new_geom <- sf::st_cast(
-    sf::st_sfc(glist, crs = sf::st_crs(geom)),
-    "MULTIPOLYGON"
-  )
+  new_geom <- sf::st_sfc(glist, crs = sf::st_crs(geom))
   sf::st_geometry(hex_sf) <- new_geom
   hex_sf
 }
@@ -1095,7 +1258,8 @@ view_h3_tiles <- function(
         id = id,
         min_zoom = li$minzoom %||% li$min_zoom %||% 0L,
         max_zoom = li$maxzoom %||% li$max_zoom %||% 22L,
-        fields = li$fields
+        fields = li$fields,
+        field_order = li$field_order
       )
     } else if (identical(id, point_layer_name)) {
       point_layer <- list(

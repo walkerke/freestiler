@@ -1,9 +1,9 @@
 [package]
 name = "freestiler-python"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "PyO3 bindings for the freestiler Rust vector tile engine"
-license = "MIT"
+license = "MIT AND ISC"
 homepage = "https://walker-data.com/freestiler/"
 documentation = "https://walker-data.com/freestiler/articles/python.html"
 repository = "https://github.com/walkerke/freestiler"

@@ -321,7 +321,7 @@ fn parse_features_from_sfc(
 
     let num_cols: Vec<Option<Vec<f64>>> = (0..prop_names.len())
         .map(|i| {
-            if prop_types[i] == "numeric" {
+            if matches!(prop_types[i].as_str(), "numeric" | "integer_double") {
                 prop_num_values.elt(i as _).ok().and_then(|v| {
                     let doubles: Doubles = v.try_into().ok()?;
                     Some(doubles.iter().map(|d| d.inner()).collect())
@@ -398,12 +398,22 @@ fn parse_features_from_sfc(
                             PropertyValue::Null
                         }
                     }
-                    "numeric" => {
+                    "numeric" | "integer_double" => {
                         if let Some(Some(ref col)) = num_cols.get(col_idx) {
                             if i < col.len() {
                                 let v = col[i];
                                 if v.is_nan() {
                                     PropertyValue::Null
+                                } else if prop_types[col_idx] == "integer_double" {
+                                    // Checked by the private R integer bridge before FFI.
+                                    if v.is_finite()
+                                        && v.fract() == 0.0
+                                        && v.abs() <= 9_007_199_254_740_991.0
+                                    {
+                                        PropertyValue::Int(v as i64)
+                                    } else {
+                                        PropertyValue::Null
+                                    }
                                 } else {
                                     PropertyValue::Double(v)
                                 }
@@ -1067,6 +1077,33 @@ fn rust_pmtiles_metadata(path: &str) -> String {
     serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string())
 }
 
+/// Internal ordered-file adapter for the compact categorical cluster pipeline.
+#[extendr]
+fn rust_cluster_file(input_path: &str, output_path: &str, layer_name: &str,
+    tile_format: &str, min_zoom: i32, max_zoom: i32, radius: f64,
+    min_points: i32, category: &str, category_values_json: &str, quiet: bool) -> String {
+    #[cfg(not(feature="geoparquet"))]
+    { let _=(input_path,output_path,layer_name,tile_format,min_zoom,max_zoom,radius,min_points,category,category_values_json,quiet);
+      "Error: Ordered clustering requires the GeoParquet-enabled build".into() }
+    #[cfg(feature="geoparquet")]
+    {
+        let run=|| -> std::result::Result<String,String> {
+            if min_zoom<0 || max_zoom<min_zoom || max_zoom>30 || min_points<1 || !radius.is_finite() || radius<=0. {
+                return Err("Invalid clustering zoom/radius/min_points".into());
+            }
+            let format=match tile_format {"mvt"=>TileFormat::Mvt,"mlt"=>TileFormat::Mlt,_=>return Err("Invalid tile format".into())};
+            let source=freestiler_core::file_input::ParquetPointSource::open(input_path)?;
+            let categories=freestiler_core::cluster_output::Categories::from_json(category,category_values_json)?;
+            let reporter:Box<dyn ProgressReporter>=if quiet {Box::new(engine::SilentReporter)}else{Box::new(RReporter)};
+            let audit=freestiler_core::cluster_output::write_pmtiles(&source,output_path,layer_name,
+                freestiler_core::supercluster::Options {min_zoom:min_zoom as u8,max_zoom:max_zoom as u8,radius,min_points:min_points as u32,..Default::default()},
+                &categories,format,reporter.as_ref())?;
+            serde_json::to_string(&audit).map_err(|e|e.to_string())
+        };
+        run().unwrap_or_else(|e|format!("Error: {e}"))
+    }
+}
+
 extendr_module! {
     mod freestiler;
     fn rust_freestile;
@@ -1074,4 +1111,5 @@ extendr_module! {
     fn rust_freestile_duckdb;
     fn rust_freestile_duckdb_query;
     fn rust_pmtiles_metadata;
+    fn rust_cluster_file;
 }

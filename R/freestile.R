@@ -315,6 +315,12 @@ freestile <- function(
     } else if (is.integer(col)) {
       col_types[i] <- "integer"
       int_values[[i]] <- col
+    } else if (is.numeric(col) && isTRUE(attr(col, "freestiler_integer"))) {
+      if (any(!is.na(col) & (!is.finite(col) | col != trunc(col) | abs(col) > 2^53 - 1))) {
+        stop("Declared integer properties must be whole numbers within 2^53 - 1.", call. = FALSE)
+      }
+      col_types[i] <- "integer_double"
+      num_values[[i]] <- as.double(col)
     } else if (is.numeric(col)) {
       col_types[i] <- "numeric"
       num_values[[i]] <- as.double(col)
@@ -343,7 +349,11 @@ freestile <- function(
 #' into the tiling engine. Input data in any coordinate reference system is
 #' automatically reprojected to WGS84 (EPSG:4326) before tiling.
 #'
-#' The GeoParquet engine requires compilation with `FREESTILER_GEOPARQUET=true`.
+#' The GeoParquet engine and categorical file clustering require GeoParquet
+#' support, available in the R-Universe build: `install.packages("freestiler", repos = c("https://walkerke.r-universe.dev",
+#' "https://cloud.r-project.org"))`. Restart R before reinstalling.
+#' Rust DuckDB and streaming are available on macOS and Linux; Windows uses
+#' the R `duckdb` backend for non-streaming queries.
 #' The DuckDB engine uses the Rust DuckDB backend when included in the build
 #' (enabled by default for native builds), or falls back to the R `duckdb`
 #' package. Control backend selection with
@@ -369,6 +379,25 @@ freestile <- function(
 #' @param quiet Logical. Whether to suppress progress (default FALSE).
 #' @param engine Character. Backend engine: `"geoparquet"` (default, for
 #'   GeoParquet files) or `"duckdb"` (for any file format DuckDB supports).
+#' @param category Character or NULL. For the ordered categorical clustering
+#'   increment, the attribute whose counts are carried into each cluster.
+#' @param category_values Character or numeric vector. An explicit dictionary
+#'   of 1--64 strings or JS-safe integers. Missing/unlisted values count as
+#'   `category:_other`; singleton attributes are preserved.
+#' @param cluster_min_points Integer. Minimum population to form a cluster
+#'   (default 2), used by the categorical clustering increment.
+#'
+#' @details
+#' With `category`, the GeoParquet engine uses the pinned Supercluster 8.0.1
+#' algorithm in physical file order, with `cluster_distance` measured in pixels
+#' relative to a 512-pixel tile. This initial increment requires
+#' `cluster_maxzoom = max_zoom`, `base_zoom = NULL`, `simplification = TRUE`,
+#' and no `drop_rate`/`coalesce`; use a separate dot
+#' source above the clustered zooms. It preserves counts at every clustered zoom
+#' and writes `cluster_expansion_zoom` for click-to-expand. Ordering changes
+#' membership. The compact global index remains resident: this is not an
+#' out-of-core clustering or fixed-RAM guarantee. The existing noncategorical
+#' clustering path is not yet migrated to this algorithm.
 #'
 #' @return The output file path (invisibly).
 #'
@@ -394,7 +423,10 @@ freestile_file <- function(
     simplification = TRUE,
     overwrite = TRUE,
     quiet = FALSE,
-    engine = "geoparquet"
+    engine = "geoparquet",
+    category = NULL,
+    category_values = NULL,
+    cluster_min_points = 2L
 ) {
   tile_format <- match.arg(tile_format, c("mvt", "mlt"))
   engine <- match.arg(engine, c("geoparquet", "duckdb"))
@@ -409,6 +441,18 @@ freestile_file <- function(
 
   if (is.null(layer_name)) {
     layer_name <- tools::file_path_sans_ext(basename(output))
+  }
+
+  if (!is.null(category) || !is.null(category_values)) {
+    if (engine != "geoparquet")
+      stop("Ordered categorical clustering currently requires engine = 'geoparquet'.", call. = FALSE)
+    if (!is.null(base_zoom))
+      stop("Categorical clustering requires base_zoom = NULL; all points contribute at every clustered zoom.", call. = FALSE)
+    if (!isTRUE(simplification))
+      stop("Categorical clustering requires simplification = TRUE; unquantized output is not supported.", call. = FALSE)
+    return(.cluster_file(input, output, layer_name, tile_format, min_zoom, max_zoom,
+      cluster_distance, cluster_maxzoom, cluster_min_points, category,
+      category_values, drop_rate, coalesce, quiet))
   }
 
   if (engine == "duckdb") {
@@ -467,7 +511,7 @@ freestile_file <- function(
     )
 
     if (startsWith(result, "Error:")) {
-      stop(result, call. = FALSE)
+      .stop_native_error(result)
     }
 
     if (!quiet) {
@@ -520,7 +564,7 @@ freestile_file <- function(
   }
 
   if (startsWith(result, "Error:")) {
-    stop(result, call. = FALSE)
+    .stop_native_error(result)
   }
 
   if (!quiet) {
@@ -661,7 +705,9 @@ freestile_query <- function(
   if (backend == "r") {
     if (streaming == "always") {
       stop(
-        "Streaming mode is only available with the Rust DuckDB backend.",
+        "Streaming mode is only available with the Rust DuckDB backend.\n",
+        .runiverse_install_hint(duckdb = TRUE),
+        "\nAfter installing, select options(freestiler.duckdb_backend = \"auto\").",
         call. = FALSE
       )
     }
@@ -702,7 +748,7 @@ freestile_query <- function(
   )
 
   if (startsWith(result, "Error:")) {
-    stop(result, call. = FALSE)
+    .stop_native_error(result)
   }
 
   if (!quiet) {
@@ -721,7 +767,7 @@ freestile_query <- function(
 #' @noRd
 .has_rust_duckdb <- function() {
   if (!is.null(.pkg_cache$rust_duckdb)) return(.pkg_cache$rust_duckdb)
-  result <- rust_freestile_duckdb_query("", "", "", "", "mvt", 0L, 6L, -1L,
+  result <- rust_freestile_duckdb_query("SELECT 1", "", "", "", "mvt", 0L, 6L, -1L,
     TRUE, -1.0, -1.0, -1L, FALSE, TRUE, "never")
   val <- !startsWith(result, "Error: DuckDB support not compiled")
   .pkg_cache$rust_duckdb <- val
@@ -744,8 +790,9 @@ freestile_query <- function(
   if (backend == "rust") {
     if (!.has_rust_duckdb()) {
       stop(
-        "Rust DuckDB backend requested but not available in this build. ",
-        "Install the r-universe build or rebuild from source with DuckDB enabled, or set ",
+        "Rust DuckDB support is not compiled into this freestiler build.\n",
+        .runiverse_install_hint(duckdb = TRUE),
+        "\nAlternatively, install.packages(c(\"duckdb\", \"DBI\")) and set ",
         "options(freestiler.duckdb_backend = \"auto\") to use the R fallback.",
         call. = FALSE
       )
@@ -769,9 +816,9 @@ freestile_query <- function(
   if (.has_r_duckdb()) return("r")
 
   stop(
-    "No DuckDB backend available. Either:\n",
-    "  - Install the r-universe build or rebuild from source with DuckDB enabled, or\n",
-    "  - Install the R duckdb package: install.packages(c(\"duckdb\", \"DBI\"))",
+    "No DuckDB backend is available in this installation.\n",
+    .runiverse_install_hint(duckdb = TRUE),
+    "\nAlternatively, install the R backend: install.packages(c(\"duckdb\", \"DBI\"))",
     call. = FALSE
   )
 }

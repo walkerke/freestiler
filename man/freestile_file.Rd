@@ -19,7 +19,10 @@ freestile_file(
   simplification = TRUE,
   overwrite = TRUE,
   quiet = FALSE,
-  engine = "geoparquet"
+  engine = "geoparquet",
+  category = NULL,
+  category_values = NULL,
+  cluster_min_points = 2L
 )
 }
 \arguments{
@@ -57,6 +60,16 @@ grid (default TRUE).}
 
 \item{engine}{Character. Backend engine: \code{"geoparquet"} (default, for
 GeoParquet files) or \code{"duckdb"} (for any file format DuckDB supports).}
+
+\item{category}{Character or NULL. For the ordered categorical clustering
+increment, the attribute whose counts are carried into each cluster.}
+
+\item{category_values}{Character or numeric vector. An explicit dictionary
+of 1--64 strings or JS-safe integers. Missing/unlisted values count as
+\verb{category:_other}; singleton attributes are preserved.}
+
+\item{cluster_min_points}{Integer. Minimum population to form a cluster
+(default 2), used by the categorical clustering increment.}
 }
 \value{
 The output file path (invisibly).
@@ -67,11 +80,26 @@ into the tiling engine. Input data in any coordinate reference system is
 automatically reprojected to WGS84 (EPSG:4326) before tiling.
 }
 \details{
-The GeoParquet engine requires compilation with \code{FREESTILER_GEOPARQUET=true}.
+The GeoParquet engine and categorical file clustering require GeoParquet
+support, available in the R-Universe build: \code{install.packages("freestiler", repos = c("https://walkerke.r-universe.dev",
+"https://cloud.r-project.org"))}. Restart R before reinstalling.
+Rust DuckDB and streaming are available on macOS and Linux; Windows uses
+the R \code{duckdb} backend for non-streaming queries.
 The DuckDB engine uses the Rust DuckDB backend when included in the build
 (enabled by default for native builds), or falls back to the R \code{duckdb}
 package. Control backend selection with
 \code{options(freestiler.duckdb_backend = "auto"|"rust"|"r")}.
+
+With \code{category}, the GeoParquet engine uses the pinned Supercluster 8.0.1
+algorithm in physical file order, with \code{cluster_distance} measured in pixels
+relative to a 512-pixel tile. This initial increment requires
+\code{cluster_maxzoom = max_zoom}, \code{base_zoom = NULL}, \code{simplification = TRUE},
+and no \code{drop_rate}/\code{coalesce}; use a separate dot
+source above the clustered zooms. It preserves counts at every clustered zoom
+and writes \code{cluster_expansion_zoom} for click-to-expand. Ordering changes
+membership. The compact global index remains resident: this is not an
+out-of-core clustering or fixed-RAM guarantee. The existing noncategorical
+clustering path is not yet migrated to this algorithm.
 }
 \examples{
 \dontrun{

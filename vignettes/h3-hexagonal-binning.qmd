@@ -80,6 +80,44 @@ freestile_h3(turbines, "turbines.pmtiles", min_zoom=2, max_zoom=12, base_zoom=10
 
 `freestile_h3()` writes one [MVT source-layer per H3 resolution](#layer-naming) (`h3_r02`, `h3_r03`, and so on) plus a `points` source-layer for the raw data. With the default `fade = FALSE`, those layers have **disjoint zoom windows**, so the map swaps hexagon resolutions cleanly as you zoom and replaces hexagons with individual turbines at `base_zoom`.
 
+### Hex-only and categorical maps
+
+If the close-up dots already have their own archive, set `include_points = FALSE`.
+Hex layers then cover the entire `min_zoom:max_zoom` range and no raw-point frame
+is fetched. Leave `base_zoom` unset. For SQL input this avoids materializing the
+raw points in R or Python, but **all occupied hex geometries are still held in
+memory** for tiling; it is not a bounded polygon-output path.
+
+```{r}
+#| eval: false
+query <- "SELECT ST_Point(lon, lat) AS geom, group_id FROM read_parquet('dots/*.parquet')"
+freestile_h3(query, "groups.pmtiles",
+  include_points = FALSE, category = "group_id", category_values = 1:8,
+  source_crs = "EPSG:4326", min_zoom = 3, max_zoom = 11,
+  h3_resolutions = c(4, 4, 5, 5, 6, 6, 7, 7, 8), fade = TRUE)
+```
+
+```python
+freestile_h3(query, "groups.pmtiles",
+             include_points=False, category="group_id", category_values=list(range(1, 9)),
+             source_crs="EPSG:4326", min_zoom=3, max_zoom=11,
+             h3_resolutions=[4, 4, 5, 5, 6, 6, 7, 7, 8], fade=True)
+```
+
+Each hex carries `point_count`, `group_id:1` through `group_id:8`, and
+`group_id:_other` for null or unlisted categories. These count input records,
+not weights. The additional `modal_category` is a string (`"1"`, not numeric 1),
+with `modal_count`, `modal_share`, and boolean `modal_tie`. A tie has no selected
+category; `_other` participates in the mode. The declared dictionary keeps
+zero-count categories present; omit it to infer up to 64 categories.
+
+Style `modal_category` with a categorical `mapgl` expression, and render ties
+with a neutral color. The numeric quick-look `view_h3_tiles()` uses `point_count`
+by default, not the category with the alphabetically first field name. Integer
+aggregates are transported exactly up to `2^53 - 1`; values beyond that range
+are rejected rather than silently rounded. For dot-density inputs, fine-cell
+modes describe the generated point realization, not observed individual locations.
+
 ### Choosing aggregations
 
 The `agg` argument controls what summary properties each hexagon carries. The simplest case counts the points in each hex; `agg = "count"` is the default.

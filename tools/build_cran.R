@@ -68,7 +68,7 @@ cran_toml <- c(
   'edition = "2021"',
   'rust-version = "1.77.2"',
   'description = "Core Rust engine for building PMTiles vector tilesets"',
-  'license = "MIT"',
+  grep('^license = ', orig, value = TRUE)[1],
   'publish = false',
   '',
   '[features]',

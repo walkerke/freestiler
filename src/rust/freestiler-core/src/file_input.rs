@@ -122,6 +122,81 @@ mod geoparquet_impl {
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     use std::fs::File;
 
+    /// Replayable GeoParquet POINT source. Physical file/row-group/row order
+    /// defines Supercluster seed order; no parallel scan reorders records.
+    pub struct ParquetPointSource {
+        path: String,
+        geometry: String,
+        rows: usize,
+        names: Vec<String>,
+        types: Vec<String>,
+        size: u64,
+        modified: std::time::SystemTime,
+        provenance: serde_json::Value,
+    }
+    impl ParquetPointSource {
+        pub fn open(path: &str) -> Result<Self, String> {
+            let file=File::open(path).map_err(|e|e.to_string())?;
+            let stat=file.metadata().map_err(|e|e.to_string())?;
+            let builder=ParquetRecordBatchReaderBuilder::try_new(file).map_err(|e|e.to_string())?;
+            let geometry=find_geometry_column(builder.metadata()).unwrap_or_else(||"geometry".into());
+            check_crs_is_wgs84(builder.metadata(),&geometry)?;
+            builder.schema().index_of(&geometry).map_err(|_|format!("Geometry column '{geometry}' not found"))?;
+            let rows=usize::try_from(builder.metadata().file_metadata().num_rows()).map_err(|_|"Invalid Parquet row count")?;
+            if rows>=1usize<<31 {return Err("Clustering currently supports fewer than 2^31 rows".into());}
+            let fields:Vec<_>=builder.schema().fields().iter().filter(|f|f.name()!=&geometry).collect();
+            for field in &fields {
+                if !matches!(field.data_type(),DataType::Boolean|DataType::Int8|DataType::Int16|DataType::Int32|DataType::Int64|DataType::UInt8|DataType::UInt16|DataType::UInt32|DataType::UInt64|DataType::Float32|DataType::Float64|DataType::Utf8|DataType::LargeUtf8) {
+                    return Err(format!("Unsupported clustering property type for '{}': {:?}; cast it to a supported scalar type",field.name(),field.data_type()));
+                }
+            }
+            let names=fields.iter().map(|f|f.name().clone()).collect();
+            let types=fields.iter().map(|f|arrow_type_to_string(f.data_type())).collect();
+            let provenance=builder.metadata().file_metadata().key_value_metadata().and_then(|kv|kv.iter().find(|e|e.key=="freestiler_input"))
+                .and_then(|e|e.value.as_deref()).map(serde_json::from_str).transpose().map_err(|e|format!("Invalid source provenance: {e}"))?
+                .unwrap_or_else(||serde_json::json!({"ordering":"physical Parquet row-group and row order"}));
+            Ok(Self {path:path.into(),geometry,rows,names,types,size:stat.len(),modified:stat.modified().map_err(|e|e.to_string())?,provenance})
+        }
+    }
+    impl crate::cluster_output::PointSource for ParquetPointSource {
+        fn len(&self)->usize {self.rows}
+        fn property_names(&self)->&[String] {&self.names}
+        fn property_types(&self)->&[String] {&self.types}
+        fn provenance(&self)->serde_json::Value {self.provenance.clone()}
+        fn check_unchanged(&self)->Result<(),String> {
+            let m=std::fs::metadata(&self.path).map_err(|e|e.to_string())?;
+            if m.len()!=self.size || m.modified().map_err(|e|e.to_string())?!=self.modified {return Err("Ordered Parquet source changed during clustering".into());}
+            Ok(())
+        }
+        fn scan(&self,visit:&mut dyn FnMut(Feature)->Result<(),String>)->Result<(),String> {
+            self.check_unchanged()?;
+            let builder=ParquetRecordBatchReaderBuilder::try_new(File::open(&self.path).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
+            let schema=builder.schema().clone();
+            let geom=schema.index_of(&self.geometry).map_err(|e|e.to_string())?;
+            let props:Vec<_>=(0..schema.fields().len()).filter(|&i|i!=geom).collect();
+            let reader=builder.with_batch_size(65_536).build().map_err(|e|e.to_string())?;
+            let mut ordinal=0u64;
+            for batch in reader {
+                let batch=batch.map_err(|e|e.to_string())?;
+                for row in 0..batch.num_rows() {
+                    let geometry=extract_wkb_geometry(batch.column(geom).as_ref(),row).ok_or_else(||format!("Null/invalid geometry at ordered row {ordinal}"))?;
+                    if !matches!(geometry,Geometry::Point(_)) {return Err("Clustering requires POINT geometries only (MultiPoint is not supported)".into());}
+                    let properties=props.iter().map(|&i| {
+                        let col=batch.column(i).as_ref();
+                        if !col.is_null(row) && matches!(col.data_type(),DataType::UInt64) && col.as_primitive::<arrow_array::types::UInt64Type>().value(row)>i64::MAX as u64 {
+                            return Err(format!("Unsigned property '{}' exceeds signed integer transport range",schema.field(i).name()));
+                        }
+                        Ok(extract_property_value(col,row))
+                    }).collect::<Result<_,String>>()?;
+                    visit(Feature {id:Some(ordinal),geometry,properties})?;
+                    ordinal+=1;
+                }
+            }
+            if ordinal!=self.rows as u64 {return Err("Ordered Parquet row count changed".into());}
+            self.check_unchanged()
+        }
+    }
+
     pub fn parquet_to_layers(
         path: &str,
         layer_name: &str,
@@ -399,6 +474,8 @@ mod geoparquet_impl {
 
 #[cfg(feature = "geoparquet")]
 pub use geoparquet_impl::parquet_to_layers;
+#[cfg(feature = "geoparquet")]
+pub use geoparquet_impl::ParquetPointSource;
 
 // ---------------------------------------------------------------------------
 // DuckDB file input

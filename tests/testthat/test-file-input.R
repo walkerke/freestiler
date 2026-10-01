@@ -11,6 +11,14 @@
   wkb_raw <- lapply(sf::st_as_binary(sf::st_geometry(sf_obj)), unclass)
   geom_array <- arrow::Array$create(wkb_raw, type = arrow::binary())
   tbl <- do.call(arrow::arrow_table, c(as.list(attrs), list(geometry = geom_array)))
+  # PROJJSON fixtures for the two CRSs exercised below, generated from EPSG.
+  crs <- jsonlite::read_json(test_path("..", "fixtures", "geoparquet-crs.json"))[[
+    as.character(sf::st_crs(sf_obj)$epsg)]]
+  stopifnot(!is.null(crs))
+  geo <- list(version = "1.1.0", primary_column = "geometry", columns = list(
+    geometry = list(encoding = "WKB", crs = crs,
+      geometry_types = as.list(unique(as.character(sf::st_geometry_type(sf_obj)))))))
+  tbl <- tbl$ReplaceSchemaMetadata(list(geo = jsonlite::toJSON(geo, auto_unbox = TRUE)))
   arrow::write_parquet(tbl, path)
 }
 
@@ -24,6 +32,8 @@ test_that("freestile_file creates PMTiles from GeoParquet", {
     system.file("shape/nc.shp", package = "sf"),
     quiet = TRUE
   )
+
+  nc <- sf::st_transform(nc, 4326)
 
   parquet_path <- tempfile(fileext = ".parquet")
   on.exit(unlink(parquet_path), add = TRUE)
@@ -58,6 +68,8 @@ test_that("freestile_file works with MVT format", {
     quiet = TRUE
   )
 
+  nc <- sf::st_transform(nc, 4326)
+
   parquet_path <- tempfile(fileext = ".parquet")
   on.exit(unlink(parquet_path), add = TRUE)
   .write_test_geoparquet(nc, parquet_path)
@@ -82,6 +94,8 @@ test_that("freestile_file works with MVT format", {
 test_that("freestile_file auto-reprojects non-WGS84 GeoParquet via sf fallback", {
   skip_on_cran()
   skip_if_not_installed("sf")
+  skip_if_not("Parquet" %in% sf::st_drivers()$name,
+    message = "GDAL Parquet driver required for sf reprojection fallback")
   skip_if_not_installed("arrow")
   skip_if_not(.has_geoparquet(), message = "GeoParquet feature not compiled")
 

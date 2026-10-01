@@ -420,8 +420,10 @@ pub fn generate_pmtiles(
         .enumerate()
         .map(|(li, l)| {
             let mut names = l.prop_names.clone();
+            let mut types = l.prop_types.clone();
             if use_cluster && is_point_layer[li] {
                 names.push("point_count".to_string());
+                types.push("integer".to_string());
             }
             // Detect predominant geometry type from first feature
             let geometry_type = l.features.first().map(|f| match &f.geometry {
@@ -433,6 +435,7 @@ pub fn generate_pmtiles(
             pmtiles_writer::LayerMeta {
                 name: l.name.clone(),
                 property_names: names,
+                property_types: types,
                 min_zoom: l.min_zoom,
                 max_zoom: l.max_zoom,
                 geometry_type,

@@ -1,0 +1,16 @@
+[package]
+name = "freestiler-supercluster-compat"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.77.2"
+publish = false
+
+# Compile the actual core source and its tests, not a copied implementation.
+# The main core test graph includes an MLT reference decoder requiring newer
+# Cargo. This isolated test target establishes only the port's compatibility.
+[lib]
+path = "../../src/rust/freestiler-core/src/supercluster/mod.rs"
+
+[dev-dependencies]
+serde_json = { version = "=1.0.149", features = ["float_roundtrip"] }
+flate2 = "=1.1.9"

@@ -86,6 +86,24 @@ freestile_h3(
 `agg` also accepts `(fn, column)` tuples (e.g. `{"n": ("count", "*")}`) if you
 would rather not write SQL.
 
+For a categorical, hex-only archive alongside existing point tiles:
+
+```python
+freestile_h3(
+    "SELECT ST_Point(lon, lat) AS geom, group_id FROM read_parquet('dots/*.parquet')",
+    "groups.pmtiles", include_points=False,
+    category="group_id", category_values=list(range(1, 9)),
+    source_crs="EPSG:4326", min_zoom=3, max_zoom=11,
+    h3_resolutions=[4, 4, 5, 5, 6, 6, 7, 7, 8], fade=True,
+)
+```
+
+The output includes `point_count`, category counts (`group_id:1`, etc., plus
+`group_id:_other` for null/unlisted values), `modal_category`, `modal_count`,
+`modal_share`, and `modal_tie`. Ties have no selected category. This avoids a
+raw-point GeoDataFrame, but all resulting hex layers still reside in memory;
+it is not bounded polygon streaming.
+
 Performance note:
 
 - `freestile(gdf, ...)` is convenient for GeoDataFrames that already fit comfortably in memory.

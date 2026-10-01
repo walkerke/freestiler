@@ -22,8 +22,10 @@ view_h3_tiles(
 \item{input}{Path to a local \code{.pmtiles} file produced by \code{\link[=freestile_h3]{freestile_h3()}}.}
 
 \item{agg_column}{Character or NULL. Aggregation column to drive the hex
-color scale. If \code{NULL}, the first non-\code{h3_id} numeric field in the
-metadata is used.}
+color scale. If \code{NULL}, categorical archives use \code{point_count}; otherwise
+the first requested numeric aggregate is used. Older archives keep their
+original field-order fallback. This is a numeric quick-look viewer;
+categorical colors can be styled with \code{\link[mapgl:add_fill_layer]{mapgl::add_fill_layer()}}.}
 
 \item{stops}{List with \code{values} and \code{colors} (equal length, sorted by
 \code{values}) defining the shared color scale across all hex layers. If

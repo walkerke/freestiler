@@ -11,7 +11,11 @@ src/*.dll
 .Rhistory
 .RData
 .Rproj.user
+# Local maps, datasets, benchmark outputs, and working notes are not package
+# source. Curate any future published example separately; do not whitelist
+# whole subdirectories of these working trees.
 examples/
+/dev/
 python/target/
 python/dist/
 python/.venv/
@@ -33,3 +37,37 @@ python/nc.dbf
 python/nc.prj
 python/nc.shp
 python/nc.shx
+
+# Native build artifacts, including dSYM files as well as dSYM directories.
+target/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.d
+*.dSYM
+*.pdb
+*.lib
+*.exp
+
+# Local environments and packaging caches.
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Generated geospatial data. Small intentional fixtures need a specific
+# exception, never a blanket data-directory whitelist.
+*.parquet
+*.feather
+*.arrow
+*.tif
+*.tiff
+*.gpkg
+*.mbtiles
+*.duckdb
+*.duckdb.wal

@@ -26,5 +26,8 @@
 ^vignettes/_quarto\.yaml$
 ^\.tmp-lib$
 ^tools/build_cran\.R$
+^tools/supercluster-compat$
+^tools/check_upstream_licenses\.py$
+^src/rust/freestiler-core/tests$
 ^vignettes$
 ^dev$

@@ -24,6 +24,7 @@ pub enum TileFormat {
 pub struct LayerMeta {
     pub name: String,
     pub property_names: Vec<String>,
+    pub property_types: Vec<String>,
     pub min_zoom: u8,
     pub max_zoom: u8,
     pub geometry_type: Option<String>,
@@ -143,6 +144,16 @@ pub fn write_pmtiles_from_spool(
     max_zoom: u8,
     bounds: (f64, f64, f64, f64), // (west, south, east, north)
 ) -> Result<(), String> {
+    write_pmtiles_from_spool_metadata(output_path, spool, format, layers, min_zoom, max_zoom, bounds, None)
+}
+
+/// Extra build provenance lives in a namespaced key; callers cannot override
+/// vector_layers or the archive header through it.
+pub fn write_pmtiles_from_spool_metadata(
+    output_path: &str, spool: &mut TileSpool, format: TileFormat,
+    layers: &[LayerMeta], min_zoom: u8, max_zoom: u8,
+    bounds: (f64,f64,f64,f64), provenance: Option<&Value>,
+) -> Result<(),String> {
     spool.flush()?;
     let mut entries = std::mem::take(&mut spool.entries);
     if entries.is_empty() {
@@ -190,7 +201,7 @@ pub fn write_pmtiles_from_spool(
         - root_directory_offset;
 
     let json_metadata_offset = root_directory_offset + root_directory_length;
-    let metadata_bytes = build_metadata_bytes(layers)?;
+    let metadata_bytes = build_metadata_bytes_with_provenance(layers, provenance)?;
     output
         .write_all(&metadata_bytes)
         .map_err(|e| format!("Cannot write PMTiles metadata: {}", e))?;
@@ -276,17 +287,30 @@ pub fn write_pmtiles_from_spool(
     Ok(())
 }
 
+#[cfg(test)]
 fn build_metadata_bytes(layers: &[LayerMeta]) -> Result<Vec<u8>, String> {
+    build_metadata_bytes_with_provenance(layers, None)
+}
+fn build_metadata_bytes_with_provenance(layers: &[LayerMeta], provenance: Option<&Value>) -> Result<Vec<u8>, String> {
     let vector_layers: Vec<Value> = layers
         .iter()
         .map(|l| {
             let mut fields = serde_json::Map::new();
-            for name in &l.property_names {
-                fields.insert(name.clone(), Value::String("string".to_string()));
+            for (i, name) in l.property_names.iter().enumerate() {
+                // TileJSON has no union type. In particular upstream cluster
+                // abbreviations are integers below 1000 and strings above it.
+                if l.property_types.get(i).map(String::as_str) == Some("mixed") { continue; }
+                let field_type = match l.property_types.get(i).map(String::as_str) {
+                    Some("integer" | "integer_double" | "numeric" | "double" | "float") => "Number",
+                    Some("logical" | "boolean" | "bool") => "Boolean",
+                    _ => "String",
+                };
+                fields.insert(name.clone(), Value::String(field_type.to_string()));
             }
             let mut layer_json = json!({
                 "id": l.name,
                 "fields": fields,
+                "field_order": l.property_names,
                 "minzoom": l.min_zoom,
                 "maxzoom": l.max_zoom
             });
@@ -297,9 +321,10 @@ fn build_metadata_bytes(layers: &[LayerMeta]) -> Result<Vec<u8>, String> {
         })
         .collect();
 
-    let metadata = json!({
+    let mut metadata = json!({
         "vector_layers": vector_layers
     });
+    if let Some(value) = provenance { metadata["freestiler"] = value.clone(); }
 
     let metadata_json =
         serde_json::to_vec(&metadata).map_err(|e| format!("Metadata JSON error: {}", e))?;
@@ -342,11 +367,14 @@ fn create_exclusive_temp(dir: &Path, stem: &str, private: bool) -> Result<(File,
 }
 
 pub(crate) fn unique_suffix() -> String {
+    // Wall-clock resolution alone is not unique across parallel callers.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let sequence = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    format!("{}_{}", std::process::id(), nanos)
+    format!("{}_{}_{}", std::process::id(), nanos, sequence)
 }
 
 #[cfg(test)]
@@ -357,10 +385,46 @@ mod tests {
         TileCoord { z, x, y }
     }
 
+    #[test]
+    fn metadata_has_tilejson_types_and_original_field_order() {
+        use std::io::Read;
+        let mut layers = test_layers();
+        layers[0].property_names = vec!["n", "label", "tie", "wide", "mean"]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        layers[0].property_types = vec![
+            "integer",
+            "character",
+            "logical",
+            "integer_double",
+            "double",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+        let compressed = build_metadata_bytes(&layers).unwrap();
+        let mut decoded = String::new();
+        flate2::read::GzDecoder::new(compressed.as_slice())
+            .read_to_string(&mut decoded)
+            .unwrap();
+        let meta: Value = serde_json::from_str(&decoded).unwrap();
+        let layer = &meta["vector_layers"][0];
+        assert_eq!(
+            layer["fields"],
+            json!({"n": "Number", "label": "String", "tie": "Boolean", "wide": "Number", "mean": "Number"})
+        );
+        assert_eq!(
+            layer["field_order"],
+            json!(["n", "label", "tie", "wide", "mean"])
+        );
+    }
+
     fn test_layers() -> Vec<LayerMeta> {
         vec![LayerMeta {
             name: "test".to_string(),
             property_names: vec![],
+            property_types: vec![],
             min_zoom: 0,
             max_zoom: 2,
             geometry_type: None,

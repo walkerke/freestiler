@@ -27,5 +27,11 @@ Authors:
   \item Kyle Walker \email{kyle@walker-data.com}
 }
 
+Other contributors:
+\itemize{
+  \item Mapbox (Supercluster code (ISC)) [copyright holder]
+  \item Vladimir Agafonkin (KDBush code (ISC)) [copyright holder]
+}
+
 }
 \keyword{internal}
