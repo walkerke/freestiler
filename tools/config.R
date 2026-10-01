@@ -80,30 +80,16 @@ cfg <- if (is_debug) "debug" else "release"
   ""
 )
 
-# Match Rust dependency C builds to R's macOS link target. Without this, build
-# scripts using the cc crate can inherit the SDK version and produce objects
-# newer than the deployment target used when R links the final shared library.
+# Keep Rust and dependency C objects compatible with R's macOS link target.
+# cc otherwise defaults C builds to the installed SDK version. Preserve user
+# overrides; use Rust's supported baseline when none is supplied.
 .macos_deployment <- ""
-if (!is_windows && identical(Sys.info()[["sysname"]], "Darwin")) {
-  deployment_target <- Sys.getenv("MACOSX_DEPLOYMENT_TARGET")
-  if (!nzchar(deployment_target)) {
-    macos_version <- suppressWarnings(system2(
-      "sw_vers", "-productVersion",
-      stdout = TRUE, stderr = FALSE
-    ))
-    if (length(macos_version) > 0L &&
-        grepl("^[0-9]+(\\.[0-9]+)?", macos_version[1L])) {
-      macos_major <- sub("^([0-9]+).*", "\\1", macos_version[1L])
-      deployment_target <- paste0(macos_major, ".0")
-    }
-  }
-  if (nzchar(deployment_target)) {
-    message("Using MACOSX_DEPLOYMENT_TARGET=", deployment_target,
-            " for Rust build.")
-    .macos_deployment <- paste0(
-      "MACOSX_DEPLOYMENT_TARGET=", deployment_target, " "
-    )
-  }
+if (!is_windows && identical(Sys.info()[["sysname"]], "Darwin") &&
+    !nzchar(Sys.getenv("MACOSX_DEPLOYMENT_TARGET"))) {
+  target <- switch(R.version$arch, aarch64 = "11.0", arm64 = "11.0",
+                   x86_64 = "10.12", NULL)
+  if (!is.null(target))
+    .macos_deployment <- paste0("MACOSX_DEPLOYMENT_TARGET=", target, " ")
 }
 
 # Cargo features

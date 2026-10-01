@@ -1,3 +1,9 @@
+# freestiler (development version)
+
+* macOS builds use Rust's baseline deployment target for Rust and dependency
+  C objects, preserving explicit user targets. This avoids linker warnings
+  when the SDK is newer than the macOS version targeted by R.
+
 # freestiler 0.2.0
 
 * The streaming point pipeline (`freestile_query()`) now partitions the query
