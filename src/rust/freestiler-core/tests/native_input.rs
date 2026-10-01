@@ -11,12 +11,16 @@ use std::{collections::BTreeMap, fs, path::PathBuf};
 struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {
+        static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let suffix = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path =
-            std::env::temp_dir().join(format!("freestiler_native_{}_{suffix}", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "freestiler_native_{}_{suffix}_{id}",
+            std::process::id()
+        ));
         fs::create_dir(&path).unwrap();
         Self(path)
     }
