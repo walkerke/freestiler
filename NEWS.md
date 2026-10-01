@@ -1,5 +1,10 @@
 # freestiler 0.3.0
 
+* MVT output with `simplification = FALSE` now preserves line positions when
+  a sub-pixel line part disappears during encoding. This affects multipart
+  lines and single lines split by tile clipping. Default simplification and
+  MLT output are unaffected.
+
 * Requests for native features omitted from the CRAN build now explain how to
   install from R-Universe, including the platform limits of Rust DuckDB and
   streaming and the R DuckDB fallback.
