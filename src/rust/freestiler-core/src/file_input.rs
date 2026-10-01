@@ -507,6 +507,20 @@ pub use geoparquet_impl::parquet_to_layers;
 #[cfg(feature = "geoparquet")]
 pub use geoparquet_impl::ParquetPointSource;
 
+/// SQL text transport for temporal and other non-numeric properties. Zoned
+/// timestamps use UTC regardless of the connection's TimeZone setting.
+#[cfg(feature = "duckdb")]
+pub(crate) fn duckdb_text_expr(ident: &str, dtype: &str) -> String {
+    let dt = dtype.trim().to_uppercase();
+    if matches!(dt.as_str(), "TIMESTAMP WITH TIME ZONE" | "TIMESTAMPTZ") {
+        format!("CASE WHEN isfinite({ident}) THEN replace(CAST(({ident} AT TIME ZONE 'UTC') AS VARCHAR), ' ', 'T') || 'Z' ELSE CAST({ident} AS VARCHAR) END")
+    } else if dt.starts_with("TIMESTAMP") {
+        format!("replace(CAST({ident} AS VARCHAR), ' ', 'T')")
+    } else {
+        format!("CAST({ident} AS VARCHAR)")
+    }
+}
+
 // ---------------------------------------------------------------------------
 // DuckDB file input
 // ---------------------------------------------------------------------------
@@ -594,6 +608,7 @@ mod duckdb_impl {
         let mut prop_names: Vec<String> = Vec::new();
         let mut prop_types: Vec<String> = Vec::new();
         let mut prop_value_kinds: Vec<DuckDbValueKind> = Vec::new();
+        let mut projection = Vec::new();
 
         for (name, dtype) in &all_columns {
             let name_lower = name.to_lowercase();
@@ -602,7 +617,14 @@ mod duckdb_impl {
             }
             prop_names.push(name.clone());
             prop_types.push(duckdb_type_to_property_type(dtype));
-            prop_value_kinds.push(duckdb_type_to_value_kind(dtype));
+            let kind = duckdb_type_to_value_kind(dtype);
+            let ident = format!("\"{}\"", name.replace('"', "\"\""));
+            projection.push(if matches!(kind, DuckDbValueKind::String) {
+                format!("{} AS {ident}", duckdb_text_expr(&ident, dtype))
+            } else {
+                ident
+            });
+            prop_value_kinds.push(kind);
         }
 
         let geom_ident = format!("\"{}\"", geom_col_name.replace('"', "\"\""));
@@ -632,18 +654,6 @@ mod duckdb_impl {
 
         // Return only properties and WKB. Exporting the original CRS-bearing
         // GEOMETRY column through DuckDB's Arrow result can fail (#19).
-        let mut projection = prop_names
-            .iter()
-            .zip(&prop_value_kinds)
-            .map(|(name, kind)| {
-                let ident = format!("\"{}\"", name.replace('"', "\"\""));
-                if matches!(kind, DuckDbValueKind::String) {
-                    format!("CAST({ident} AS VARCHAR) AS {ident}")
-                } else {
-                    ident
-                }
-            })
-            .collect::<Vec<_>>();
         let wkb_col_idx = projection.len();
         projection.push(format!("{} AS __wkb", geom_expr));
         let wkb_sql = format!("SELECT {} FROM ({}) AS __t", projection.join(", "), sql);

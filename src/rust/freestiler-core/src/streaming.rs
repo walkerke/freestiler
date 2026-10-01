@@ -297,7 +297,7 @@ fn materialize_partitions(
            FROM __typed
          ) TO {} (FORMAT PARQUET, COMPRESSION ZSTD, PARTITION_BY (__part))",
         prepared.geom_expr,
-        prop_select,
+        prepared.source_prop_select(),
         prepared.sql,
         prepared.geom_expr,
         prop_select,
@@ -1128,7 +1128,7 @@ fn decode_bucket_records(data: &[u8], coord: TileCoord) -> Result<Vec<Feature>, 
 }
 
 // ---------------------------------------------------------------------------
-// Query preparation (unchanged behavior: DESCRIBE + SRID probe + prop typing)
+// Query preparation (DESCRIBE + CRS probe + property formatting)
 // ---------------------------------------------------------------------------
 
 struct PreparedPointQuery {
@@ -1136,6 +1136,7 @@ struct PreparedPointQuery {
     geom_expr: String,
     prop_names: Vec<String>,
     prop_value_kinds: Vec<DuckDbValueKind>,
+    prop_expressions: Vec<String>,
 }
 
 impl PreparedPointQuery {
@@ -1192,12 +1193,23 @@ impl PreparedPointQuery {
 
         let mut prop_names = Vec::new();
         let mut prop_value_kinds = Vec::new();
+        let mut prop_expressions = Vec::new();
         for (name, dtype) in all_columns {
             if name.eq_ignore_ascii_case(&geom_col_name) {
                 continue;
             }
+            let kind = duckdb_type_to_value_kind(&dtype);
+            let ident = quote_ident(&name);
+            prop_expressions.push(if matches!(kind, DuckDbValueKind::String) {
+                format!(
+                    "{} AS {ident}",
+                    crate::file_input::duckdb_text_expr(&ident, &dtype)
+                )
+            } else {
+                ident
+            });
             prop_names.push(name);
-            prop_value_kinds.push(duckdb_type_to_value_kind(&dtype));
+            prop_value_kinds.push(kind);
         }
 
         Ok(Self {
@@ -1205,7 +1217,17 @@ impl PreparedPointQuery {
             geom_expr,
             prop_names,
             prop_value_kinds,
+            prop_expressions,
         })
+    }
+
+    // Format once at the source boundary. Partition files then carry strings.
+    fn source_prop_select(&self) -> String {
+        if self.prop_expressions.is_empty() {
+            String::new()
+        } else {
+            format!(", {}", self.prop_expressions.join(", "))
+        }
     }
 
     fn prop_select(&self) -> String {
@@ -1216,15 +1238,7 @@ impl PreparedPointQuery {
                 ", {}",
                 self.prop_names
                     .iter()
-                    .zip(self.prop_value_kinds.iter())
-                    .map(|(name, kind)| {
-                        let ident = quote_ident(name);
-                        if matches!(kind, DuckDbValueKind::String) {
-                            format!("CAST({ident} AS VARCHAR) AS {ident}")
-                        } else {
-                            ident
-                        }
-                    })
+                    .map(|name| quote_ident(name))
                     .collect::<Vec<_>>()
                     .join(", ")
             )

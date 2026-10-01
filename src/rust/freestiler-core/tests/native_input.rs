@@ -168,18 +168,21 @@ fn parquet_temporal_properties_survive_mvt_and_point_replay() {
 }
 
 #[cfg(feature = "duckdb")]
-const TEMPORAL_QUERY: &str = "SELECT ST_Point(-80,35) AS geom, d AS \"survey date\", ts FROM (VALUES (DATE '2026-10-01', TIMESTAMP '2026-10-01 12:34:56.123456'), (NULL::DATE, NULL::TIMESTAMP)) t(d,ts)";
+const TEMPORAL_QUERY: &str = "SELECT ST_Point(-80,35) AS geom, d AS \"survey date\", ts, tz FROM (VALUES (DATE '2026-10-01', TIMESTAMP '2026-10-01 12:34:56.123456', TIMESTAMPTZ '2026-10-01 12:34:56.123456+00'), (NULL::DATE, NULL::TIMESTAMP, NULL::TIMESTAMPTZ)) t(d,ts,tz)";
 
 #[cfg(feature = "duckdb")]
 #[test]
 fn duckdb_temporal_properties_survive_mvt() {
-    let layers =
-        freestiler_core::file_input::duckdb_query_to_layers(None, TEMPORAL_QUERY, "dates", 0, 0)
-            .unwrap();
-    let decoded = encode_decode(&layers[0]);
-    assert_eq!(decoded[0]["survey date"], "2026-10-01");
-    assert_eq!(decoded[0]["ts"], "2026-10-01 12:34:56.123456");
-    assert!(decoded[1].is_empty());
+    for zone in ["UTC", "America/Chicago"] {
+        let sql = format!("SET TimeZone = '{zone}'; {TEMPORAL_QUERY}");
+        let layers =
+            freestiler_core::file_input::duckdb_query_to_layers(None, &sql, "dates", 0, 0).unwrap();
+        let decoded = encode_decode(&layers[0]);
+        assert_eq!(decoded[0]["survey date"], "2026-10-01");
+        assert_eq!(decoded[0]["ts"], "2026-10-01T12:34:56.123456");
+        assert_eq!(decoded[0]["tz"], "2026-10-01T12:34:56.123456Z");
+        assert!(decoded[1].is_empty());
+    }
 }
 
 #[cfg(feature = "duckdb")]
@@ -204,7 +207,7 @@ fn streaming_temporal_properties_survive_pmtiles() {
     };
     freestiler_core::streaming::generate_pmtiles_from_duckdb_query(
         None,
-        TEMPORAL_QUERY,
+        &format!("SET TimeZone = 'America/Chicago'; {TEMPORAL_QUERY}"),
         output.to_str().unwrap(),
         "dates",
         &config,
@@ -222,7 +225,8 @@ fn streaming_temporal_properties_survive_pmtiles() {
     assert_eq!(decoded.len(), 2);
     assert!(decoded.iter().any(
         |p| p.get("survey date").map(String::as_str) == Some("2026-10-01")
-            && p.get("ts").map(String::as_str) == Some("2026-10-01 12:34:56.123456")
+            && p.get("ts").map(String::as_str) == Some("2026-10-01T12:34:56.123456")
+            && p.get("tz").map(String::as_str) == Some("2026-10-01T12:34:56.123456Z")
     ));
     assert!(decoded.iter().any(BTreeMap::is_empty));
 }

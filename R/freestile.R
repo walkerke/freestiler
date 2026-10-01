@@ -888,7 +888,7 @@ freestile_query <- function(
 
   if (needs_transform) {
     wrapped_sql <- sprintf(
-      "SELECT * EXCLUDE (\"%s\"), ST_AsWKB(ST_Transform(\"%s\", '%s', 'EPSG:4326')) AS __wkb FROM (%s) AS __t",
+      "SELECT * EXCLUDE (\"%s\"), ST_AsWKB(ST_Transform(\"%s\", '%s', 'EPSG:4326', always_xy := true)) AS __wkb FROM (%s) AS __t",
       geom_col, geom_col, source_crs, sql
     )
   } else {
