@@ -1,5 +1,10 @@
 # freestiler 0.3.0
 
+* MVT output with `simplification = FALSE` now preserves line positions when
+  a sub-pixel line part disappears during encoding. This affects multipart
+  lines and single lines split by tile clipping. Default simplification and
+  MLT output are unaffected.
+
 * Requests for native features omitted from the CRAN build now explain how to
   install from R-Universe, including the platform limits of Rust DuckDB and
   streaming and the R DuckDB fallback.
@@ -42,8 +47,6 @@
   `view_h3_tiles()` defaults to `point_count` for categorical output and skips
   H3 bookkeeping fields when choosing a numeric aggregate.
 
-# freestiler 0.2.0
-
 * The streaming point pipeline (`freestile_query()`) now partitions the query
   result on disk and tiles each partition independently instead of sorting
   the whole dataset at once. This removes the global sort that previously
@@ -79,8 +82,6 @@
   micro-optimization measured at ~0.01% of archive size on real data); the
   PMTiles `clustered` header flag is now computed from the actual tile data
   layout rather than always claimed.
-# freestiler 0.2.1
-
 * macOS builds now use Rust's baseline deployment target for Rust and dependency
   C objects instead of the host OS version. This prevents warnings when R links
   for an older macOS version. Explicit user deployment targets are preserved.
