@@ -73,6 +73,11 @@ cran_toml <- c(
   '',
   '[features]',
   'default = []',
+  '# Declare disabled features for rustc check-cfg without optional dependencies.',
+  'geoparquet = []',
+  'duckdb = []',
+  'fastpfor = []',
+  'fsst = []',
   '',
   '[dependencies]',
   'geo = "0.29"',
@@ -95,11 +100,9 @@ cran_toml <- c(
 )
 writeLines(cran_toml, core_toml)
 
-# Strip optional feature forwarding from root Cargo.toml
+# Keep feature names for check-cfg, without forwarding to optional dependencies.
 root_lines <- readLines(root_toml)
-root_lines <- root_lines[
-  !grepl("^(geoparquet|duckdb|fastpfor|fsst) =", root_lines)
-]
+root_lines <- sub("^(geoparquet|duckdb|fastpfor|fsst) =.*$", "\\1 = []", root_lines)
 writeLines(root_lines, root_toml)
 
 # --- Step 3: Re-vendor with stripped deps ---
