@@ -146,7 +146,7 @@ mod geoparquet_impl {
             if rows>=1usize<<31 {return Err("Clustering currently supports fewer than 2^31 rows".into());}
             let fields:Vec<_>=builder.schema().fields().iter().filter(|f|f.name()!=&geometry).collect();
             for field in &fields {
-                if !matches!(field.data_type(),DataType::Boolean|DataType::Int8|DataType::Int16|DataType::Int32|DataType::Int64|DataType::UInt8|DataType::UInt16|DataType::UInt32|DataType::UInt64|DataType::Float32|DataType::Float64|DataType::Utf8|DataType::LargeUtf8) {
+                if !matches!(field.data_type(),DataType::Boolean|DataType::Int8|DataType::Int16|DataType::Int32|DataType::Int64|DataType::UInt8|DataType::UInt16|DataType::UInt32|DataType::UInt64|DataType::Float32|DataType::Float64|DataType::Utf8|DataType::LargeUtf8|DataType::Date32|DataType::Date64|DataType::Timestamp(_,_)|DataType::Time32(_)|DataType::Time64(_)) {
                     return Err(format!("Unsupported clustering property type for '{}': {:?}; cast it to a supported scalar type",field.name(),field.data_type()));
                 }
             }
@@ -186,7 +186,7 @@ mod geoparquet_impl {
                         if !col.is_null(row) && matches!(col.data_type(),DataType::UInt64) && col.as_primitive::<arrow_array::types::UInt64Type>().value(row)>i64::MAX as u64 {
                             return Err(format!("Unsigned property '{}' exceeds signed integer transport range",schema.field(i).name()));
                         }
-                        Ok(extract_property_value(col,row))
+                        extract_property_value(col,row)
                     }).collect::<Result<_,String>>()?;
                     visit(Feature {id:Some(ordinal),geometry,properties})?;
                     ordinal+=1;
@@ -265,7 +265,7 @@ mod geoparquet_impl {
                         break;
                     }
                     let col = batch.column(col_idx);
-                    properties.push(extract_property_value(col.as_ref(), row));
+                    properties.push(extract_property_value(col.as_ref(), row)?);
                     prop_col_idx += 1;
                 }
 
@@ -405,11 +405,11 @@ mod geoparquet_impl {
         wkb_bytes.and_then(wkb_to_geometry)
     }
 
-    fn extract_property_value(col: &dyn Array, row: usize) -> PropertyValue {
+    fn extract_property_value(col: &dyn Array, row: usize) -> Result<PropertyValue, String> {
         if col.is_null(row) {
-            return PropertyValue::Null;
+            return Ok(PropertyValue::Null);
         }
-        match col.data_type() {
+        Ok(match col.data_type() {
             DataType::Boolean => PropertyValue::Bool(col.as_boolean().value(row)),
             DataType::Int8 => PropertyValue::Int(
                 col.as_primitive::<arrow_array::types::Int8Type>()
@@ -467,8 +467,38 @@ mod geoparquet_impl {
             DataType::LargeUtf8 => {
                 PropertyValue::String(col.as_string::<i64>().value(row).to_string())
             }
+            DataType::Date32
+            | DataType::Date64
+            | DataType::Timestamp(_, _)
+            | DataType::Time32(_)
+            | DataType::Time64(_) => {
+                // Vector tiles have no temporal type. Preserve the value as ISO text.
+                use arrow_cast::display::{ArrayFormatter, FormatOptions};
+                // Zoned Arrow timestamps are epoch instants. Display them in UTC
+                // without requiring a timezone database or losing the offset.
+                let utc = if let DataType::Timestamp(unit, Some(_)) = col.data_type() {
+                    Some(arrow_array::make_array(
+                        col.to_data()
+                            .into_builder()
+                            .data_type(DataType::Timestamp(unit.clone(), Some("+00:00".into())))
+                            .build()
+                            .map_err(|e| format!("Cannot format timestamp: {e}"))?,
+                    ))
+                } else {
+                    None
+                };
+                let options = FormatOptions::default().with_datetime_format(Some("%Y-%m-%d"));
+                let formatter = ArrayFormatter::try_new(utc.as_deref().unwrap_or(col), &options)
+                    .map_err(|e| format!("Cannot format temporal property: {e}"))?;
+                PropertyValue::String(
+                    formatter
+                        .value(row)
+                        .try_to_string()
+                        .map_err(|e| format!("Cannot format temporal property: {e}"))?,
+                )
+            }
             _ => PropertyValue::Null,
-        }
+        })
     }
 }
 
@@ -476,6 +506,20 @@ mod geoparquet_impl {
 pub use geoparquet_impl::parquet_to_layers;
 #[cfg(feature = "geoparquet")]
 pub use geoparquet_impl::ParquetPointSource;
+
+/// SQL text transport for temporal and other non-numeric properties. Zoned
+/// timestamps use UTC regardless of the connection's TimeZone setting, without ICU.
+#[cfg(feature = "duckdb")]
+pub(crate) fn duckdb_text_expr(ident: &str, dtype: &str) -> String {
+    let dt = dtype.trim().to_uppercase();
+    if matches!(dt.as_str(), "TIMESTAMP WITH TIME ZONE" | "TIMESTAMPTZ") {
+        format!("CASE WHEN isfinite({ident}) THEN replace(CAST(make_timestamp(epoch_us({ident})) AS VARCHAR), ' ', 'T') || 'Z' ELSE CAST({ident} AS VARCHAR) END")
+    } else if dt.starts_with("TIMESTAMP") {
+        format!("replace(CAST({ident} AS VARCHAR), ' ', 'T')")
+    } else {
+        format!("CAST({ident} AS VARCHAR)")
+    }
+}
 
 // ---------------------------------------------------------------------------
 // DuckDB file input
@@ -559,30 +603,35 @@ mod duckdb_impl {
             "No geometry column found in query result. Ensure your query returns a GEOMETRY column.".to_string()
         })?;
 
-        let wkb_col_idx = all_columns.len();
-
         let geom_col_lower = geom_col_name.to_lowercase();
         let skip_cols: Vec<String> = vec![geom_col_lower, "__wkb".into()];
         let mut prop_names: Vec<String> = Vec::new();
-        let mut prop_col_indices: Vec<usize> = Vec::new();
         let mut prop_types: Vec<String> = Vec::new();
         let mut prop_value_kinds: Vec<DuckDbValueKind> = Vec::new();
+        let mut projection = Vec::new();
 
-        for (i, (name, dtype)) in all_columns.iter().enumerate() {
+        for (name, dtype) in &all_columns {
             let name_lower = name.to_lowercase();
             if skip_cols.contains(&name_lower) {
                 continue;
             }
             prop_names.push(name.clone());
-            prop_col_indices.push(i);
             prop_types.push(duckdb_type_to_property_type(dtype));
-            prop_value_kinds.push(duckdb_type_to_value_kind(dtype));
+            let kind = duckdb_type_to_value_kind(dtype);
+            let ident = format!("\"{}\"", name.replace('"', "\"\""));
+            projection.push(if matches!(kind, DuckDbValueKind::String) {
+                format!("{} AS {ident}", duckdb_text_expr(&ident, dtype))
+            } else {
+                ident
+            });
+            prop_value_kinds.push(kind);
         }
 
-        // Detect source CRS via ST_SRID on the first non-null geometry
+        let geom_ident = format!("\"{}\"", geom_col_name.replace('"', "\"\""));
+        // Detect source CRS via ST_CRS on the first non-null geometry.
         let srid_sql = format!(
-            "SELECT ST_SRID(\"{}\") AS __srid FROM ({}) AS __t WHERE \"{}\" IS NOT NULL LIMIT 1",
-            geom_col_name, sql, geom_col_name
+            "SELECT ST_CRS({}) AS __srid FROM ({}) AS __t WHERE {} IS NOT NULL LIMIT 1",
+            geom_ident, sql, geom_ident
         );
         let source_srid: Option<String> = conn
             .query_row(&srid_sql, params![], |row| row.get::<_, String>(0))
@@ -592,17 +641,22 @@ mod duckdb_impl {
         let geom_expr = match source_srid.as_deref() {
             // Already WGS84 or unknown — use as-is
             None | Some("EPSG:4326") | Some("") => {
-                format!("ST_AsWKB(\"{}\")", geom_col_name)
+                format!("ST_AsWKB({})", geom_ident)
             }
             Some(src_crs) => {
                 format!(
-                    "ST_AsWKB(ST_Transform(\"{}\", '{}', 'EPSG:4326'))",
-                    geom_col_name, src_crs
+                    "ST_AsWKB(ST_Transform({}, '{}', 'EPSG:4326', always_xy := true))",
+                    geom_ident,
+                    src_crs.replace('\'', "''")
                 )
             }
         };
 
-        let wkb_sql = format!("SELECT *, {} AS __wkb FROM ({}) AS __t", geom_expr, sql);
+        // Return only properties and WKB. Exporting the original CRS-bearing
+        // GEOMETRY column through DuckDB's Arrow result can fail (#19).
+        let wkb_col_idx = projection.len();
+        projection.push(format!("{} AS __wkb", geom_expr));
+        let wkb_sql = format!("SELECT {} FROM ({}) AS __t", projection.join(", "), sql);
 
         let mut stmt = conn
             .prepare(&wkb_sql)
@@ -625,7 +679,7 @@ mod duckdb_impl {
             };
 
             let mut properties = Vec::with_capacity(prop_names.len());
-            for (&col_idx, &kind) in prop_col_indices.iter().zip(prop_value_kinds.iter()) {
+            for (col_idx, &kind) in prop_value_kinds.iter().enumerate() {
                 properties.push(extract_value(row, col_idx, kind));
             }
 

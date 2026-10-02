@@ -21,6 +21,18 @@ permissions:
   contents: read
 
 jobs:
+  test-native-input:
+    name: Native input regressions
+    runs-on: ubuntu-latest
+    env:
+      DUCKDB_EXPLICIT_PLATFORM: linux_amd64
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test temporal properties and CRS-tagged geometry
+        run: cargo test --locked --manifest-path src/rust/freestiler-core/Cargo.toml --features geoparquet,duckdb --test native_input
+
   build-wheels:
     name: Build Wheel (${{ matrix.os }}, py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
