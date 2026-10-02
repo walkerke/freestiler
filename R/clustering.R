@@ -29,6 +29,11 @@
   if (is.numeric(category_values) && (any(!is.finite(category_values)) ||
       any(category_values != floor(category_values)) || any(abs(category_values) > 2^53 - 1)))
     stop("Numeric category_values must be JS-safe integers", call. = FALSE)
+  if (!requireNamespace("jsonlite", quietly = TRUE))
+    stop("Categorical file clustering requires jsonlite and a GeoParquet-enabled freestiler build.\n",
+      'Install jsonlite with install.packages("jsonlite").\n',
+      "For native GeoParquet support omitted from CRAN:\n",
+      .runiverse_install_hint(), call. = FALSE)
   result <- .Call(wrap__rust_cluster_file, input, output, layer_name, tile_format,
     as.integer(min_zoom), as.integer(max_zoom), as.double(cluster_distance),
     as.integer(cluster_min_points), category,
