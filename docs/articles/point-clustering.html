@@ -87,16 +87,16 @@
 </div>
 <section class="level3"><h3 id="install-the-packages">Install the packages<a class="anchor" aria-label="anchor" href="#install-the-packages"></a>
 </h3>
-<p>Categorical file clustering needs freestiler 0.3.0 or later from R-Universe. Donut charts need mapgl 0.5.2 or later. Restart R before replacing an existing installation:</p>
+<p>This example uses the development version of freestiler; categorical clustering directly from sf objects and GeoDataFrames is not in the released 0.3.0 packages. The in-memory implementation is compatible with the CRAN build. Until the next CRAN release, install from R-Universe. Donut charts need mapgl 0.5.2 or later. Restart R before replacing an existing installation:</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb1"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/utils/install.packages.html" class="external-link">install.packages</a></span><span class="op">(</span></span>
 <span>  <span class="st">"freestiler"</span>,</span>
 <span>  repos <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"https://walkerke.r-universe.dev"</span>, <span class="st">"https://cloud.r-project.org"</span><span class="op">)</span></span>
 <span><span class="op">)</span></span>
-<span><span class="fu"><a href="https://rdrr.io/r/utils/install.packages.html" class="external-link">install.packages</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"mapgl"</span>, <span class="st">"sf"</span>, <span class="st">"sfarrow"</span>, <span class="st">"jsonlite"</span>, <span class="st">"httpuv"</span><span class="op">)</span><span class="op">)</span></span></code></pre></div>
+<span><span class="fu"><a href="https://rdrr.io/r/utils/install.packages.html" class="external-link">install.packages</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"mapgl"</span>, <span class="st">"sf"</span>, <span class="st">"jsonlite"</span>, <span class="st">"httpuv"</span><span class="op">)</span><span class="op">)</span></span></code></pre></div>
 </div>
-<p>Run the following sections in order in the same R session. <code>sfarrow</code> writes a GeoParquet file with the geometry and CRS metadata the tiler needs. No API key is required.</p>
+<p>Run the following sections in order in the same R session. We will read the data into an sf object and pass it directly to <code><a href="../reference/freestile.html">freestile()</a></code>. No API key is required.</p>
 </section><section class="level3"><h3 id="download-and-prepare-the-points">Download and prepare the points<a class="anchor" aria-label="anchor" href="#download-and-prepare-the-points"></a>
 </h3>
 <div class="cell">
@@ -125,34 +125,26 @@
 <span><span class="va">plants</span> <span class="op">&lt;-</span> <span class="va">plants</span><span class="op">[</span><span class="fu"><a href="https://rdrr.io/r/base/order.html" class="external-link">order</a></span><span class="op">(</span><span class="va">plants</span><span class="op">$</span><span class="va">gppd_idnr</span><span class="op">)</span>, <span class="op">]</span></span>
 <span><span class="va">fuels</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"Solar"</span>, <span class="st">"Wind"</span>, <span class="st">"Hydro"</span>, <span class="st">"Gas"</span>, <span class="st">"Coal"</span>, <span class="st">"Nuclear"</span>, <span class="st">"Other"</span><span class="op">)</span></span>
 <span><span class="va">plants</span><span class="op">$</span><span class="va">fuel</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/ifelse.html" class="external-link">ifelse</a></span><span class="op">(</span><span class="va">plants</span><span class="op">$</span><span class="va">primary_fuel</span> <span class="op"><a href="https://rdrr.io/r/base/match.html" class="external-link">%in%</a></span> <span class="va">fuels</span>, <span class="va">plants</span><span class="op">$</span><span class="va">primary_fuel</span>, <span class="st">"Other"</span><span class="op">)</span></span>
-<span><span class="va">plants</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://r-spatial.github.io/sf/reference/st_as_sf.html" class="external-link">st_as_sf</a></span><span class="op">(</span><span class="va">plants</span>, coords <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"longitude"</span>, <span class="st">"latitude"</span><span class="op">)</span>, crs <span class="op">=</span> <span class="fl">4326</span><span class="op">)</span></span>
-<span></span>
-<span><span class="fu">sfarrow</span><span class="fu">::</span><span class="fu"><a href="https://wcjochem.github.io/sfarrow/reference/st_write_parquet.html" class="external-link">st_write_parquet</a></span><span class="op">(</span><span class="va">plants</span>, <span class="st">"power-plant-demo/plants.parquet"</span><span class="op">)</span></span></code></pre></div>
+<span><span class="va">plants</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://r-spatial.github.io/sf/reference/st_as_sf.html" class="external-link">st_as_sf</a></span><span class="op">(</span><span class="va">plants</span>, coords <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"longitude"</span>, <span class="st">"latitude"</span><span class="op">)</span>, crs <span class="op">=</span> <span class="fl">4326</span><span class="op">)</span></span></code></pre></div>
 </div>
 <p>This leaves 9,581 plants. Sorting by plant ID fixes the input order, which matters for reproducible cluster membership. The fuel groups and their order will be shared by the tiler, the donut charts, and the legend.</p>
 </section><section class="level3"><h3 id="build-the-tiles">Build the tiles<a class="anchor" aria-label="anchor" href="#build-the-tiles"></a>
 </h3>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb3"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="fu"><a href="../reference/freestile_file.html">freestile_file</a></span><span class="op">(</span></span>
-<span>  <span class="st">"power-plant-demo/plants.parquet"</span>,</span>
-<span>  <span class="st">"power-plant-demo/clusters.pmtiles"</span>,</span>
+<code class="sourceCode R"><span><span class="fu"><a href="../reference/freestile.html">freestile</a></span><span class="op">(</span></span>
+<span>  <span class="va">plants</span>,</span>
+<span>  <span class="st">"power-plant-demo/plants.pmtiles"</span>,</span>
 <span>  layer_name <span class="op">=</span> <span class="st">"plants"</span>,</span>
 <span>  min_zoom <span class="op">=</span> <span class="fl">0</span>,</span>
-<span>  max_zoom <span class="op">=</span> <span class="fl">9</span>,</span>
+<span>  max_zoom <span class="op">=</span> <span class="fl">14</span>,</span>
 <span>  cluster_distance <span class="op">=</span> <span class="fl">60</span>,</span>
 <span>  cluster_maxzoom <span class="op">=</span> <span class="fl">9</span>,</span>
 <span>  category <span class="op">=</span> <span class="st">"fuel"</span>,</span>
 <span>  category_values <span class="op">=</span> <span class="va">fuels</span></span>
-<span><span class="op">)</span></span>
-<span></span>
-<span><span class="co"># A separate point archive supplies the close-up view at zoom 10 and above.</span></span>
-<span><span class="fu"><a href="../reference/freestile.html">freestile</a></span><span class="op">(</span></span>
-<span>  <span class="va">plants</span>, <span class="st">"power-plant-demo/points.pmtiles"</span>,</span>
-<span>  layer_name <span class="op">=</span> <span class="st">"plants"</span>, min_zoom <span class="op">=</span> <span class="fl">10</span>, max_zoom <span class="op">=</span> <span class="fl">14</span></span>
 <span><span class="op">)</span></span></code></pre></div>
 </div>
-<p>Every cluster carries <code>point_count</code> and counts named <code>fuel:Solar</code>, <code>fuel:Wind</code>, and so on. These are plant counts, not megawatts or electricity generation. Isolated plants retain their name and other original attributes.</p>
+<p>The archive contains clusters through zoom 9 and individual plants from zoom 10 onward. Every cluster carries <code>point_count</code> and counts named <code>fuel:Solar</code>, <code>fuel:Wind</code>, and so on. These are plant counts, not megawatts or electricity generation. Isolated plants retain their name and other original attributes.</p>
 </section><section class="level3"><h3 id="draw-donut-charts-with-mapgl">Draw donut charts with mapgl<a class="anchor" aria-label="anchor" href="#draw-donut-charts-with-mapgl"></a>
 </h3>
 <div class="cell">
@@ -170,14 +162,10 @@
 <span>  attributionControl <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>customAttribution <span class="op">=</span> <span class="st">"Plants: WRI Global Power Plant Database v1.3.0 / CC BY 4.0"</span><span class="op">)</span></span>
 <span><span class="op">)</span> <span class="op">|&gt;</span></span>
 <span>  <span class="fu"><a href="https://walker-data.com/mapgl/reference/add_pmtiles_source.html" class="external-link">add_pmtiles_source</a></span><span class="op">(</span></span>
-<span>    <span class="st">"plant-clusters"</span>, <span class="st">"http://localhost:8082/clusters.pmtiles"</span>, maxzoom <span class="op">=</span> <span class="fl">9</span></span>
-<span>  <span class="op">)</span> <span class="op">|&gt;</span></span>
-<span>  <span class="fu"><a href="https://walker-data.com/mapgl/reference/add_pmtiles_source.html" class="external-link">add_pmtiles_source</a></span><span class="op">(</span></span>
-<span>    <span class="st">"plant-points"</span>, <span class="st">"http://localhost:8082/points.pmtiles"</span>, minzoom <span class="op">=</span> <span class="fl">10</span>, maxzoom <span class="op">=</span> <span class="fl">14</span></span>
+<span>    <span class="st">"plant-source"</span>, <span class="st">"http://localhost:8082/plants.pmtiles"</span>, maxzoom <span class="op">=</span> <span class="fl">14</span></span>
 <span>  <span class="op">)</span> <span class="op">|&gt;</span></span>
 <span>  <span class="fu"><a href="https://walker-data.com/mapgl/reference/add_circle_layer.html" class="external-link">add_circle_layer</a></span><span class="op">(</span></span>
-<span>    <span class="st">"plants"</span>, source <span class="op">=</span> <span class="st">"plant-clusters"</span>, source_layer <span class="op">=</span> <span class="st">"plants"</span>,</span>
-<span>    max_zoom <span class="op">=</span> <span class="fl">10</span>,</span>
+<span>    <span class="st">"plants"</span>, source <span class="op">=</span> <span class="st">"plant-source"</span>, source_layer <span class="op">=</span> <span class="st">"plants"</span>,</span>
 <span>    circle_color <span class="op">=</span> <span class="va">fuel_color</span>, circle_radius <span class="op">=</span> <span class="fl">4</span>,</span>
 <span>    popup <span class="op">=</span> <span class="st">"name"</span>,</span>
 <span>    cluster_options <span class="op">=</span> <span class="fu"><a href="https://walker-data.com/mapgl/reference/cluster_options.html" class="external-link">cluster_options</a></span><span class="op">(</span></span>
@@ -187,13 +175,6 @@
 <span>      donut_width <span class="op">=</span> <span class="fl">0.35</span>, donut_fill <span class="op">=</span> <span class="st">"#142329"</span>, text_color <span class="op">=</span> <span class="st">"#f6f4e9"</span>,</span>
 <span>      circle_stroke_color <span class="op">=</span> <span class="st">"#10191e"</span></span>
 <span>    <span class="op">)</span></span>
-<span>  <span class="op">)</span> <span class="op">|&gt;</span></span>
-<span>  <span class="fu"><a href="https://walker-data.com/mapgl/reference/add_circle_layer.html" class="external-link">add_circle_layer</a></span><span class="op">(</span></span>
-<span>    <span class="st">"plant-details"</span>, source <span class="op">=</span> <span class="st">"plant-points"</span>, source_layer <span class="op">=</span> <span class="st">"plants"</span>,</span>
-<span>    min_zoom <span class="op">=</span> <span class="fl">10</span>,</span>
-<span>    circle_color <span class="op">=</span> <span class="va">fuel_color</span>, circle_radius <span class="op">=</span> <span class="fl">5</span>,</span>
-<span>    circle_stroke_color <span class="op">=</span> <span class="st">"white"</span>, circle_stroke_width <span class="op">=</span> <span class="fl">1</span>,</span>
-<span>    popup <span class="op">=</span> <span class="st">"name"</span></span>
 <span>  <span class="op">)</span> <span class="op">|&gt;</span></span>
 <span>  <span class="fu"><a href="https://walker-data.com/mapgl/reference/map_legends.html" class="external-link">add_categorical_legend</a></span><span class="op">(</span></span>
 <span>    <span class="st">"Primary fuel"</span>, values <span class="op">=</span> <span class="va">fuels</span>, colors <span class="op">=</span> <span class="va">colors</span>,</span>
@@ -208,7 +189,7 @@
 <span><span class="va">plant_map</span></span></code></pre></div>
 </div>
 <p>The number inside each donut is the number of plants. Its slices show their fuel mix. Because <code>source</code> names a PMTiles source, mapgl uses the clusters freestiler already computed. Passing an sf object as <code>source</code> would instead ask the browser to cluster the points.</p>
-<p>Zoom in to see the regional differences. At zoom 10 the map switches to the separate point archive, where you can click individual plants for their names.</p>
+<p>Zoom in to see the regional differences. At zoom 10 the clusters give way to individual plants from the same archive. Click a plant to see its name.</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb5"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://walker-data.com/mapgl/reference/set_view.html" class="external-link">set_view</a></span><span class="op">(</span><span class="va">plant_map</span>, center <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="op">-</span><span class="fl">119</span>, <span class="fl">38</span><span class="op">)</span>, zoom <span class="op">=</span> <span class="fl">5.5</span><span class="op">)</span></span></code></pre></div>
@@ -220,12 +201,12 @@
 <p>When finished, stop the tile server with <code>stop_server(port = 8082)</code>.</p>
 </section><section class="level3"><h3 id="build-the-same-clusters-in-python">Build the same clusters in Python<a class="anchor" aria-label="anchor" href="#build-the-same-clusters-in-python"></a>
 </h3>
-<p>The Python package includes native GeoParquet input. Install the packages, then run this standalone version of the download and tiling steps:</p>
-<div class="sourceCode" id="cb6"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install freestiler geopandas pyarrow</span></code></pre></div>
+<p>In Python, read the data into a GeoDataFrame and pass it to <code><a href="../reference/freestile.html">freestile()</a></code> in the same way. Until the next PyPI release, install the development version from GitHub (building from source requires Rust):</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install <span class="st">"git+https://github.com/walkerke/freestiler.git#subdirectory=python"</span></span></code></pre></div>
 <div class="sourceCode" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> pathlib <span class="im">import</span> Path</span>
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pandas <span class="im">as</span> pd</span>
 <span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> geopandas <span class="im">as</span> gpd</span>
-<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> freestiler <span class="im">import</span> freestile, freestile_file</span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> freestiler <span class="im">import</span> freestile</span>
 <span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a>folder <span class="op">=</span> Path(<span class="st">"power-plant-demo"</span>)</span>
 <span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a>folder.mkdir(exist_ok<span class="op">=</span><span class="va">True</span>)</span>
@@ -245,18 +226,14 @@
 <span id="cb7-21"><a href="#cb7-21" aria-hidden="true" tabindex="-1"></a>plants <span class="op">=</span> gpd.GeoDataFrame(</span>
 <span id="cb7-22"><a href="#cb7-22" aria-hidden="true" tabindex="-1"></a>    plants, geometry<span class="op">=</span>gpd.points_from_xy(plants.longitude, plants.latitude), crs<span class="op">=</span><span class="dv">4326</span></span>
 <span id="cb7-23"><a href="#cb7-23" aria-hidden="true" tabindex="-1"></a>).drop(columns<span class="op">=</span>[<span class="st">"longitude"</span>, <span class="st">"latitude"</span>])</span>
-<span id="cb7-24"><a href="#cb7-24" aria-hidden="true" tabindex="-1"></a>plants.to_parquet(folder <span class="op">/</span> <span class="st">"plants.parquet"</span>, index<span class="op">=</span><span class="va">False</span>)</span>
-<span id="cb7-25"><a href="#cb7-25" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-26"><a href="#cb7-26" aria-hidden="true" tabindex="-1"></a>freestile_file(</span>
-<span id="cb7-27"><a href="#cb7-27" aria-hidden="true" tabindex="-1"></a>    folder <span class="op">/</span> <span class="st">"plants.parquet"</span>, folder <span class="op">/</span> <span class="st">"clusters.pmtiles"</span>,</span>
-<span id="cb7-28"><a href="#cb7-28" aria-hidden="true" tabindex="-1"></a>    layer_name<span class="op">=</span><span class="st">"plants"</span>, min_zoom<span class="op">=</span><span class="dv">0</span>, max_zoom<span class="op">=</span><span class="dv">9</span>,</span>
-<span id="cb7-29"><a href="#cb7-29" aria-hidden="true" tabindex="-1"></a>    cluster_distance<span class="op">=</span><span class="dv">60</span>, cluster_maxzoom<span class="op">=</span><span class="dv">9</span>,</span>
-<span id="cb7-30"><a href="#cb7-30" aria-hidden="true" tabindex="-1"></a>    category<span class="op">=</span><span class="st">"fuel"</span>, category_values<span class="op">=</span>fuels,</span>
-<span id="cb7-31"><a href="#cb7-31" aria-hidden="true" tabindex="-1"></a>)</span>
-<span id="cb7-32"><a href="#cb7-32" aria-hidden="true" tabindex="-1"></a>freestile(</span>
-<span id="cb7-33"><a href="#cb7-33" aria-hidden="true" tabindex="-1"></a>    plants, folder <span class="op">/</span> <span class="st">"points.pmtiles"</span>, layer_name<span class="op">=</span><span class="st">"plants"</span>, min_zoom<span class="op">=</span><span class="dv">10</span>, max_zoom<span class="op">=</span><span class="dv">14</span></span>
-<span id="cb7-34"><a href="#cb7-34" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
-<p>These archives can be viewed with the R map code above; load <code>freestiler</code> and <code>mapgl</code> and define <code>fuels</code> first. The <a href="python.html#viewing-tiles">Python article</a> also covers serving PMTiles for other viewers.</p>
+<span id="cb7-24"><a href="#cb7-24" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-25"><a href="#cb7-25" aria-hidden="true" tabindex="-1"></a>freestile(</span>
+<span id="cb7-26"><a href="#cb7-26" aria-hidden="true" tabindex="-1"></a>    plants, folder <span class="op">/</span> <span class="st">"plants.pmtiles"</span>,</span>
+<span id="cb7-27"><a href="#cb7-27" aria-hidden="true" tabindex="-1"></a>    layer_name<span class="op">=</span><span class="st">"plants"</span>, min_zoom<span class="op">=</span><span class="dv">0</span>, max_zoom<span class="op">=</span><span class="dv">14</span>,</span>
+<span id="cb7-28"><a href="#cb7-28" aria-hidden="true" tabindex="-1"></a>    cluster_distance<span class="op">=</span><span class="dv">60</span>, cluster_maxzoom<span class="op">=</span><span class="dv">9</span>,</span>
+<span id="cb7-29"><a href="#cb7-29" aria-hidden="true" tabindex="-1"></a>    category<span class="op">=</span><span class="st">"fuel"</span>, category_values<span class="op">=</span>fuels,</span>
+<span id="cb7-30"><a href="#cb7-30" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<p>This archive can be viewed with the R map code above; load <code>freestiler</code> and <code>mapgl</code> and define <code>fuels</code> first. The <a href="python.html#viewing-tiles">Python article</a> also covers serving PMTiles for other viewers.</p>
 </section><section class="level3"><h3 id="properties-in-the-tiles">Properties in the tiles<a class="anchor" aria-label="anchor" href="#properties-in-the-tiles"></a>
 </h3>
 <table class="table caption-top">
@@ -305,10 +282,11 @@
 <p>The example explicitly groups less common fuels into <code>"Other"</code>, so those counts live in <code>fuel:Other</code>. The separate <code>fuel:_other</code> field is for values outside the declared dictionary. Zero-count categories are retained.</p>
 </section><section class="level3"><h3 id="zooms-and-memory">Zooms and memory<a class="anchor" aria-label="anchor" href="#zooms-and-memory"></a>
 </h3>
-<p>Categorical file clustering is experimental in 0.3.0 and uses Supercluster 8.0.1. It requires WGS84 POINT GeoParquet input and a dictionary of 1 to 64 distinct strings or whole numbers. Its radius is measured against a 512-pixel tile, and changing the physical row order of the input file can change cluster membership.</p>
-<p>Set <code>cluster_maxzoom</code> equal to <code>max_zoom</code>. Keep <code>base_zoom</code> unset and <code>simplification</code> at its default, and omit <code>drop_rate</code> and <code>coalesce</code> so all points contribute to the counts. The separate point archive above supplies the higher zooms.</p>
-<p>The global clustering index stays in memory. Tile output and singleton attributes are stored on disk, but this is not the streaming query pipeline. The input must contain fewer than <code>2^31</code> rows. Select only the properties you need before creating the input file.</p>
-<p>If you only need ordinary count clusters, <code>freestile(plants, "ordinary.pmtiles", cluster_distance = 50, cluster_maxzoom = 9)</code> uses the existing clustering path and works with the CRAN build. For summaries on a fixed grid, including the most common category and its share, use <a href="h3-hexagonal-binning.html#hex-only-and-categorical-maps">H3 binning</a>.</p>
+<p>Categorical clustering uses Supercluster 8.0.1 with a 512-pixel tile extent. It accepts a single POINT sf object or GeoDataFrame and a dictionary of 1 to 64 distinct strings or whole numbers. Input is reprojected to WGS84 as needed. Changing row order can change cluster membership.</p>
+<p>Use <code>cluster_maxzoom</code> to choose the last zoom with clusters. Individual points fill the remaining zooms through <code>max_zoom</code>. Keep <code>base_zoom</code> unset and <code>simplification</code> at its default, and omit <code>drop_rate</code> and <code>coalesce</code> so all points contribute to the counts.</p>
+<p>The input and global clustering index stay in memory. Tile output and singleton attributes are stored on disk, but this is not the streaming query pipeline. The input must contain fewer than <code>2^31</code> rows. Select only the properties you need.</p>
+<p>For data already stored in GeoParquet, <code><a href="../reference/freestile_file.html">freestile_file()</a></code> also supports categories in the released 0.3.0 packages. That path requires native GeoParquet support (R-Universe or Python), WGS84 POINT input, and <code>cluster_maxzoom = max_zoom</code>; it currently writes clustered zooms only.</p>
+<p>For summaries on a fixed grid, including the most common category and its share, use <a href="h3-hexagonal-binning.html#hex-only-and-categorical-maps">H3 binning</a>.</p>
 </section><script id="quarto-html-after-body" type="application/javascript">
   window.document.addEventListener("DOMContentLoaded", function (event) {
       var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);

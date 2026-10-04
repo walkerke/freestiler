@@ -19,9 +19,12 @@ US power plants grouped into donut clusters by primary fuel.
 
 ### Install the packages
 
-Categorical file clustering needs freestiler 0.3.0 or later from
-R-Universe. Donut charts need mapgl 0.5.2 or later. Restart R before
-replacing an existing installation:
+This example uses the development version of freestiler; categorical
+clustering directly from sf objects and GeoDataFrames is not in the
+released 0.3.0 packages. The in-memory implementation is compatible with
+the CRAN build. Until the next CRAN release, install from R-Universe.
+Donut charts need mapgl 0.5.2 or later. Restart R before replacing an
+existing installation:
 
 ``` r
 
@@ -29,12 +32,13 @@ install.packages(
   "freestiler",
   repos = c("https://walkerke.r-universe.dev", "https://cloud.r-project.org")
 )
-install.packages(c("mapgl", "sf", "sfarrow", "jsonlite", "httpuv"))
+install.packages(c("mapgl", "sf", "jsonlite", "httpuv"))
 ```
 
-Run the following sections in order in the same R session. `sfarrow`
-writes a GeoParquet file with the geometry and CRS metadata the tiler
-needs. No API key is required.
+Run the following sections in order in the same R session. We will read
+the data into an sf object and pass it directly to
+[`freestile()`](https://walker-data.com/freestiler/reference/freestile.md).
+No API key is required.
 
 ### Download and prepare the points
 
@@ -65,8 +69,6 @@ plants <- plants[order(plants$gppd_idnr), ]
 fuels <- c("Solar", "Wind", "Hydro", "Gas", "Coal", "Nuclear", "Other")
 plants$fuel <- ifelse(plants$primary_fuel %in% fuels, plants$primary_fuel, "Other")
 plants <- st_as_sf(plants, coords = c("longitude", "latitude"), crs = 4326)
-
-sfarrow::st_write_parquet(plants, "power-plant-demo/plants.parquet")
 ```
 
 This leaves 9,581 plants. Sorting by plant ID fixes the input order,
@@ -78,29 +80,24 @@ legend.
 
 ``` r
 
-freestile_file(
-  "power-plant-demo/plants.parquet",
-  "power-plant-demo/clusters.pmtiles",
+freestile(
+  plants,
+  "power-plant-demo/plants.pmtiles",
   layer_name = "plants",
   min_zoom = 0,
-  max_zoom = 9,
+  max_zoom = 14,
   cluster_distance = 60,
   cluster_maxzoom = 9,
   category = "fuel",
   category_values = fuels
 )
-
-# A separate point archive supplies the close-up view at zoom 10 and above.
-freestile(
-  plants, "power-plant-demo/points.pmtiles",
-  layer_name = "plants", min_zoom = 10, max_zoom = 14
-)
 ```
 
-Every cluster carries `point_count` and counts named `fuel:Solar`,
-`fuel:Wind`, and so on. These are plant counts, not megawatts or
-electricity generation. Isolated plants retain their name and other
-original attributes.
+The archive contains clusters through zoom 9 and individual plants from
+zoom 10 onward. Every cluster carries `point_count` and counts named
+`fuel:Solar`, `fuel:Wind`, and so on. These are plant counts, not
+megawatts or electricity generation. Isolated plants retain their name
+and other original attributes.
 
 ### Draw donut charts with mapgl
 
@@ -119,14 +116,10 @@ plant_map <- maplibre(
   attributionControl = list(customAttribution = "Plants: WRI Global Power Plant Database v1.3.0 / CC BY 4.0")
 ) |>
   add_pmtiles_source(
-    "plant-clusters", "http://localhost:8082/clusters.pmtiles", maxzoom = 9
-  ) |>
-  add_pmtiles_source(
-    "plant-points", "http://localhost:8082/points.pmtiles", minzoom = 10, maxzoom = 14
+    "plant-source", "http://localhost:8082/plants.pmtiles", maxzoom = 14
   ) |>
   add_circle_layer(
-    "plants", source = "plant-clusters", source_layer = "plants",
-    max_zoom = 10,
+    "plants", source = "plant-source", source_layer = "plants",
     circle_color = fuel_color, circle_radius = 4,
     popup = "name",
     cluster_options = cluster_options(
@@ -136,13 +129,6 @@ plant_map <- maplibre(
       donut_width = 0.35, donut_fill = "#142329", text_color = "#f6f4e9",
       circle_stroke_color = "#10191e"
     )
-  ) |>
-  add_circle_layer(
-    "plant-details", source = "plant-points", source_layer = "plants",
-    min_zoom = 10,
-    circle_color = fuel_color, circle_radius = 5,
-    circle_stroke_color = "white", circle_stroke_width = 1,
-    popup = "name"
   ) |>
   add_categorical_legend(
     "Primary fuel", values = fuels, colors = colors,
@@ -162,9 +148,9 @@ their fuel mix. Because `source` names a PMTiles source, mapgl uses the
 clusters freestiler already computed. Passing an sf object as `source`
 would instead ask the browser to cluster the points.
 
-Zoom in to see the regional differences. At zoom 10 the map switches to
-the separate point archive, where you can click individual plants for
-their names.
+Zoom in to see the regional differences. At zoom 10 the clusters give
+way to individual plants from the same archive. Click a plant to see its
+name.
 
 ``` r
 
@@ -180,19 +166,20 @@ When finished, stop the tile server with `stop_server(port = 8082)`.
 
 ### Build the same clusters in Python
 
-The Python package includes native GeoParquet input. Install the
-packages, then run this standalone version of the download and tiling
-steps:
+In Python, read the data into a GeoDataFrame and pass it to
+[`freestile()`](https://walker-data.com/freestiler/reference/freestile.md)
+in the same way. Until the next PyPI release, install the development
+version from GitHub (building from source requires Rust):
 
 ``` bash
-pip install freestiler geopandas pyarrow
+pip install "git+https://github.com/walkerke/freestiler.git#subdirectory=python"
 ```
 
 ``` python
 from pathlib import Path
 import pandas as pd
 import geopandas as gpd
-from freestiler import freestile, freestile_file
+from freestiler import freestile
 
 folder = Path("power-plant-demo")
 folder.mkdir(exist_ok=True)
@@ -212,21 +199,17 @@ plants["fuel"] = plants.primary_fuel.where(plants.primary_fuel.isin(fuels), "Oth
 plants = gpd.GeoDataFrame(
     plants, geometry=gpd.points_from_xy(plants.longitude, plants.latitude), crs=4326
 ).drop(columns=["longitude", "latitude"])
-plants.to_parquet(folder / "plants.parquet", index=False)
 
-freestile_file(
-    folder / "plants.parquet", folder / "clusters.pmtiles",
-    layer_name="plants", min_zoom=0, max_zoom=9,
+freestile(
+    plants, folder / "plants.pmtiles",
+    layer_name="plants", min_zoom=0, max_zoom=14,
     cluster_distance=60, cluster_maxzoom=9,
     category="fuel", category_values=fuels,
 )
-freestile(
-    plants, folder / "points.pmtiles", layer_name="plants", min_zoom=10, max_zoom=14
-)
 ```
 
-These archives can be viewed with the R map code above; load
-`freestiler` and `mapgl` and define `fuels` first. The [Python
+This archive can be viewed with the R map code above; load `freestiler`
+and `mapgl` and define `fuels` first. The [Python
 article](https://walker-data.com/freestiler/articles/python.html#viewing-tiles)
 also covers serving PMTiles for other viewers.
 
@@ -255,25 +238,29 @@ retained.
 
 ### Zooms and memory
 
-Categorical file clustering is experimental in 0.3.0 and uses
-Supercluster 8.0.1. It requires WGS84 POINT GeoParquet input and a
-dictionary of 1 to 64 distinct strings or whole numbers. Its radius is
-measured against a 512-pixel tile, and changing the physical row order
-of the input file can change cluster membership.
+Categorical clustering uses Supercluster 8.0.1 with a 512-pixel tile
+extent. It accepts a single POINT sf object or GeoDataFrame and a
+dictionary of 1 to 64 distinct strings or whole numbers. Input is
+reprojected to WGS84 as needed. Changing row order can change cluster
+membership.
 
-Set `cluster_maxzoom` equal to `max_zoom`. Keep `base_zoom` unset and
-`simplification` at its default, and omit `drop_rate` and `coalesce` so
-all points contribute to the counts. The separate point archive above
-supplies the higher zooms.
+Use `cluster_maxzoom` to choose the last zoom with clusters. Individual
+points fill the remaining zooms through `max_zoom`. Keep `base_zoom`
+unset and `simplification` at its default, and omit `drop_rate` and
+`coalesce` so all points contribute to the counts.
 
-The global clustering index stays in memory. Tile output and singleton
-attributes are stored on disk, but this is not the streaming query
-pipeline. The input must contain fewer than `2^31` rows. Select only the
-properties you need before creating the input file.
+The input and global clustering index stay in memory. Tile output and
+singleton attributes are stored on disk, but this is not the streaming
+query pipeline. The input must contain fewer than `2^31` rows. Select
+only the properties you need.
 
-If you only need ordinary count clusters,
-`freestile(plants, "ordinary.pmtiles", cluster_distance = 50, cluster_maxzoom = 9)`
-uses the existing clustering path and works with the CRAN build. For
-summaries on a fixed grid, including the most common category and its
-share, use [H3
+For data already stored in GeoParquet,
+[`freestile_file()`](https://walker-data.com/freestiler/reference/freestile_file.md)
+also supports categories in the released 0.3.0 packages. That path
+requires native GeoParquet support (R-Universe or Python), WGS84 POINT
+input, and `cluster_maxzoom = max_zoom`; it currently writes clustered
+zooms only.
+
+For summaries on a fixed grid, including the most common category and
+its share, use [H3
 binning](https://walker-data.com/freestiler/articles/h3-hexagonal-binning.html#hex-only-and-categorical-maps).

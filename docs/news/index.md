@@ -1,5 +1,16 @@
 # Changelog
 
+## freestiler (development version)
+
+- [`freestile()`](https://walker-data.com/freestiler/reference/freestile.md)
+  now accepts `category`, `category_values`, and `cluster_min_points`
+  for a single POINT sf object or GeoDataFrame. Category counts use the
+  same Supercluster engine as file clustering, with individual points
+  above `cluster_maxzoom` in the same archive. The in-memory path works
+  without GeoParquet or DuckDB support, including in the CRAN build.
+  Existing calls without category options retain their clustering
+  behavior.
+
 ## freestiler 0.3.0
 
 CRAN release: 2026-10-02

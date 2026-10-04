@@ -241,24 +241,26 @@ category counts, the most common category, its share, and ties.
 
 ## Categorical point clusters
 
-[`freestile_file()`](https://walker-data.com/freestiler/reference/freestile_file.md)
-can count categories within each cluster, so a map can show the mix of
-groups as well as the total:
+In the development version, pass a POINT sf object directly to
+[`freestile()`](https://walker-data.com/freestiler/reference/freestile.md)
+to count categories within each cluster:
 
 ``` r
 
-freestile_file(
-  "places.parquet", "place_clusters.pmtiles",
-  layer_name = "places", min_zoom = 0, max_zoom = 10,
+freestile(
+  places, "place_clusters.pmtiles",
+  layer_name = "places", min_zoom = 0, max_zoom = 14,
   cluster_distance = 60, cluster_maxzoom = 10,
   category = "kind", category_values = c("park", "museum", "library")
 )
 ```
 
-This requires POINT GeoParquet input and the R-Universe build (or the
-Python package). See [Point
+The same archive contains individual points above `cluster_maxzoom`.
+Python accepts a GeoDataFrame in the same way. This path works without
+native GeoParquet or DuckDB, including in the CRAN build; it is not in
+the released 0.3.0 packages yet. See [Point
 clustering](https://walker-data.com/freestiler/articles/point-clustering.html)
-for the output properties, Python example, and current limits.
+for a complete power-plant example in R and Python.
 
 ## Multi-layer tilesets
 
