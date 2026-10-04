@@ -17,7 +17,7 @@ navbar:
   bg: "#2b4a2b"
   type: dark
   structure:
-    left:  [intro, reference, articles]
+    left:  [intro, reference, articles, news]
     right: [search, github]
   components:
     articles:
