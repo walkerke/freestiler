@@ -28,7 +28,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">freestiler</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0.9000</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -317,7 +317,7 @@ Created nc_counties.pmtiles (65.2 KB)</code></pre>
 <span>  cluster_maxzoom <span class="op">=</span> <span class="fl">8</span></span>
 <span><span class="op">)</span></span></code></pre></div>
 </div>
-<p>To retain the mix of categories within clusters, use <code><a href="../reference/freestile_file.html">freestile_file()</a></code> with <code>category</code> and <code>category_values</code>. See <a href="point-clustering.html">Point clustering</a> for R and Python examples and the distinction between the two clustering paths.</p>
+<p>In the development version, <code><a href="../reference/freestile.html">freestile()</a></code> also accepts <code>category</code> and <code>category_values</code> directly for a POINT sf object, with no GeoParquet or DuckDB requirement. See <a href="point-clustering.html">Point clustering</a> for a complete example that reads power plants into sf (or a GeoDataFrame in Python), builds one archive, and displays donut clusters with mapgl. Released 0.3.0 supports categorical clustering through <code><a href="../reference/freestile_file.html">freestile_file()</a></code>.</p>
 </section><section class="level3"><h3 id="feature-coalescing">Feature coalescing<a class="anchor" aria-label="anchor" href="#feature-coalescing"></a>
 </h3>
 <p>The <code>coalesce</code> parameter merges features with identical attributes within each tile. Lines sharing endpoints are joined, and polygons are grouped into MultiPolygons:</p>

@@ -13,7 +13,7 @@ coalescing."><meta property="og:image" content="https://walker-data.com/freestil
 
     <a class="navbar-brand me-2" href="../index.html">freestiler</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0.9000</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -72,7 +72,10 @@ coalescing.</p>
 <span>  simplification <span class="op">=</span> <span class="cn">TRUE</span>,</span>
 <span>  generate_ids <span class="op">=</span> <span class="cn">TRUE</span>,</span>
 <span>  overwrite <span class="op">=</span> <span class="cn">TRUE</span>,</span>
-<span>  quiet <span class="op">=</span> <span class="cn">FALSE</span></span>
+<span>  quiet <span class="op">=</span> <span class="cn">FALSE</span>,</span>
+<span>  category <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  category_values <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  cluster_min_points <span class="op">=</span> <span class="fl">2L</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
 
@@ -159,6 +162,23 @@ simplification and prevents slivers between adjacent polygons.</p></dd>
 <dt id="arg-quiet">quiet<a class="anchor" aria-label="anchor" href="#arg-quiet"></a></dt>
 <dd><p>Logical. Whether to suppress progress messages (default FALSE).</p></dd>
 
+
+<dt id="arg-category">category<a class="anchor" aria-label="anchor" href="#arg-category"></a></dt>
+<dd><p>Character or NULL. A category column for a single POINT sf
+layer. Adds category counts to clusters and singletons. Available in CRAN
+builds without GeoParquet or DuckDB; requires jsonlite.</p></dd>
+
+
+<dt id="arg-category-values">category_values<a class="anchor" aria-label="anchor" href="#arg-category-values"></a></dt>
+<dd><p>Character or numeric vector. A dictionary of 1 to 64
+distinct strings or whole numbers within +/- (2^53 - 1). Missing or unlisted
+values count toward <code>category:_other</code>.</p></dd>
+
+
+<dt id="arg-cluster-min-points">cluster_min_points<a class="anchor" aria-label="anchor" href="#arg-cluster-min-points"></a></dt>
+<dd><p>Integer. Minimum number of points in a categorical
+cluster (default 2).</p></dd>
+
 </dl></div>
     <div class="section level2">
     <h2 id="value">Value<a class="anchor" aria-label="anchor" href="#value"></a></h2>
@@ -168,6 +188,14 @@ simplification and prevents slivers between adjacent polygons.</p></dd>
     <h2 id="details">Details<a class="anchor" aria-label="anchor" href="#details"></a></h2>
     <p>Input data in any coordinate reference system (CRS) is automatically
 reprojected to WGS84 (EPSG:4326) before tiling.</p>
+<p>With <code>category</code>, clustering uses the ordered Supercluster algorithm
+with a 512-pixel tile extent. Input row order affects membership. Above
+<code>cluster_maxzoom</code>, the same archive contains individual points with their
+original attributes. The input and global clustering index stay in memory.
+Categorical clustering currently accepts a single POINT sf layer; leave
+<code>base_zoom</code> unset, omit <code>drop_rate</code> and <code>coalesce</code>, and keep
+<code>simplification = TRUE</code>. Calls without <code>category</code> retain the existing
+clustering algorithm.</p>
     </div>
 
     <div class="section level2">

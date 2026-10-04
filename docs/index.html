@@ -28,7 +28,7 @@
 
     <a class="navbar-brand me-2" href="index.html">freestiler</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0.9000</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -222,15 +222,15 @@
 <div class="section level2">
 <h2 id="categorical-point-clusters">Categorical point clusters<a class="anchor" aria-label="anchor" href="#categorical-point-clusters"></a>
 </h2>
-<p><code><a href="reference/freestile_file.html">freestile_file()</a></code> can count categories within each cluster, so a map can show the mix of groups as well as the total:</p>
+<p>With R development version 0.3.0.9000 or later from R-Universe, pass a POINT sf object directly to <code><a href="reference/freestile.html">freestile()</a></code> to count categories within each cluster:</p>
 <div class="sourceCode" id="cb13"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="fu"><a href="reference/freestile_file.html">freestile_file</a></span><span class="op">(</span></span>
-<span>  <span class="st">"places.parquet"</span>, <span class="st">"place_clusters.pmtiles"</span>,</span>
-<span>  layer_name <span class="op">=</span> <span class="st">"places"</span>, min_zoom <span class="op">=</span> <span class="fl">0</span>, max_zoom <span class="op">=</span> <span class="fl">10</span>,</span>
+<code class="sourceCode R"><span><span class="fu"><a href="reference/freestile.html">freestile</a></span><span class="op">(</span></span>
+<span>  <span class="va">places</span>, <span class="st">"place_clusters.pmtiles"</span>,</span>
+<span>  layer_name <span class="op">=</span> <span class="st">"places"</span>, min_zoom <span class="op">=</span> <span class="fl">0</span>, max_zoom <span class="op">=</span> <span class="fl">14</span>,</span>
 <span>  cluster_distance <span class="op">=</span> <span class="fl">60</span>, cluster_maxzoom <span class="op">=</span> <span class="fl">10</span>,</span>
 <span>  category <span class="op">=</span> <span class="st">"kind"</span>, category_values <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"park"</span>, <span class="st">"museum"</span>, <span class="st">"library"</span><span class="op">)</span></span>
 <span><span class="op">)</span></span></code></pre></div>
-<p>This requires POINT GeoParquet input and the R-Universe build (or the Python package). See <a href="https://walker-data.com/freestiler/articles/point-clustering.html">Point clustering</a> for the output properties, Python example, and current limits.</p>
+<p>The same archive contains individual points above <code>cluster_maxzoom</code>. Python accepts a GeoDataFrame in the same way. This path works without native GeoParquet or DuckDB, including in the CRAN build; it is not in the released 0.3.0 packages yet. See <a href="https://walker-data.com/freestiler/articles/point-clustering.html">Point clustering</a> for a complete power-plant example in R and Python.</p>
 </div>
 <div class="section level2">
 <h2 id="multi-layer-tilesets">Multi-layer tilesets<a class="anchor" aria-label="anchor" href="#multi-layer-tilesets"></a>

@@ -19,7 +19,10 @@ freestile(
   simplification = TRUE,
   generate_ids = TRUE,
   overwrite = TRUE,
-  quiet = FALSE
+  quiet = FALSE,
+  category = NULL,
+  category_values = NULL,
+  cluster_min_points = 2L
 )
 }
 \arguments{
@@ -72,6 +75,17 @@ simplification and prevents slivers between adjacent polygons.}
 (default TRUE).}
 
 \item{quiet}{Logical. Whether to suppress progress messages (default FALSE).}
+
+\item{category}{Character or NULL. A category column for a single POINT sf
+layer. Adds category counts to clusters and singletons. Available in CRAN
+builds without GeoParquet or DuckDB; requires jsonlite.}
+
+\item{category_values}{Character or numeric vector. A dictionary of 1 to 64
+distinct strings or whole numbers within +/- (2^53 - 1). Missing or unlisted
+values count toward \verb{category:_other}.}
+
+\item{cluster_min_points}{Integer. Minimum number of points in a categorical
+cluster (default 2).}
 }
 \value{
 The output file path (invisibly).
@@ -85,6 +99,15 @@ coalescing.
 \details{
 Input data in any coordinate reference system (CRS) is automatically
 reprojected to WGS84 (EPSG:4326) before tiling.
+
+With \code{category}, clustering uses the ordered Supercluster algorithm
+with a 512-pixel tile extent. Input row order affects membership. Above
+\code{cluster_maxzoom}, the same archive contains individual points with their
+original attributes. The input and global clustering index stay in memory.
+Categorical clustering currently accepts a single POINT sf layer; leave
+\code{base_zoom} unset, omit \code{drop_rate} and \code{coalesce}, and keep
+\code{simplification = TRUE}. Calls without \code{category} retain the existing
+clustering algorithm.
 }
 \examples{
 \dontrun{

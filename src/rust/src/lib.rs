@@ -1077,6 +1077,41 @@ fn rust_pmtiles_metadata(path: &str) -> String {
     serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string())
 }
 
+/// Internal in-memory adapter; available without optional Cargo features.
+#[extendr]
+fn rust_cluster_layers(
+    layers: List, output_path: &str, tile_format: &str,
+    min_zoom: i32, max_zoom: i32, cluster_maxzoom: i32, radius: f64,
+    min_points: i32, category: &str, category_values_json: &str,
+    generate_ids: bool, quiet: bool,
+) -> String {
+    let run = || -> std::result::Result<String, String> {
+        if min_zoom < 0 || max_zoom > 30 || cluster_maxzoom < min_zoom ||
+            cluster_maxzoom > max_zoom || min_points < 1 {
+            return Err("Invalid clustering zoom/min_points".into());
+        }
+        let format = match tile_format {
+            "mvt" => TileFormat::Mvt, "mlt" => TileFormat::Mlt,
+            _ => return Err("Invalid tile format".into()),
+        };
+        let data = parse_layers_from_r(&layers, generate_ids);
+        if data.len() != 1 {
+            return Err("Categorical clustering requires one POINT layer".into());
+        }
+        let categories = freestiler_core::cluster_output::Categories::from_json(category, category_values_json)?;
+        let reporter: Box<dyn ProgressReporter> = if quiet {
+            Box::new(engine::SilentReporter)
+        } else { Box::new(RReporter) };
+        freestiler_core::cluster_output::write_layer(&data[0], output_path,
+            freestiler_core::supercluster::Options {
+                min_zoom: min_zoom as u8, max_zoom: cluster_maxzoom as u8,
+                radius, min_points: min_points as u32, ..Default::default()
+            }, max_zoom as u8, &categories, format, generate_ids, reporter.as_ref())?;
+        Ok(output_path.to_string())
+    };
+    run().unwrap_or_else(|e| format!("Error: {e}"))
+}
+
 /// Internal ordered-file adapter for the compact categorical cluster pipeline.
 #[extendr]
 fn rust_cluster_file(input_path: &str, output_path: &str, layer_name: &str,
@@ -1112,4 +1147,5 @@ extendr_module! {
     fn rust_freestile_duckdb_query;
     fn rust_pmtiles_metadata;
     fn rust_cluster_file;
+    fn rust_cluster_layers;
 }

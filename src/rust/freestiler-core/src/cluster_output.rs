@@ -7,7 +7,7 @@
 use crate::engine::ProgressReporter;
 use crate::pmtiles_writer::{self, LayerMeta, TileFormat, TileSpool};
 use crate::supercluster::{self, Input, Level, Options};
-use crate::tiler::{Feature, Geometry, PropertyValue, TileCoord};
+use crate::tiler::{Feature, Geometry, LayerData, PropertyValue, TileCoord};
 use crate::{mlt, mvt};
 use geo_types::Point;
 use serde::Serialize;
@@ -27,6 +27,19 @@ pub trait PointSource {
     fn provenance(&self) -> serde_json::Value {
         serde_json::Value::Null
     }
+}
+
+impl PointSource for LayerData {
+    fn len(&self) -> usize { self.features.len() }
+    fn property_names(&self) -> &[String] { &self.prop_names }
+    fn property_types(&self) -> &[String] { &self.prop_types }
+    fn scan(&self, visit: &mut dyn FnMut(Feature) -> Result<(), String>) -> Result<(), String> {
+        for feature in &self.features {
+            visit(feature.clone())?;
+        }
+        Ok(())
+    }
+    fn check_unchanged(&self) -> Result<(), String> { Ok(()) }
 }
 
 #[derive(Clone, Default)]
@@ -87,7 +100,10 @@ impl Categories {
     fn code(&self, value: &PropertyValue) -> u8 {
         self.values
             .iter()
-            .position(|v| v == value)
+            .position(|v| match (v, value) {
+                (PropertyValue::Int(a), PropertyValue::Double(b)) => *a as f64 == *b,
+                _ => v == value,
+            })
             .unwrap_or(self.values.len()) as u8
     }
     fn fields(&self) -> Vec<String> {
@@ -330,7 +346,40 @@ pub fn write_pmtiles(
     format: TileFormat,
     reporter: &dyn ProgressReporter,
 ) -> Result<BuildAudit, String> {
+    write_pmtiles_inner(source, output, name, options, options.max_zoom, categories,
+        format, true, reporter)
+}
+
+/// In-memory categorical clusters, followed by original points above the cutoff.
+pub fn write_layer(
+    layer: &LayerData,
+    output: &str,
+    options: Options,
+    max_zoom: u8,
+    categories: &Categories,
+    format: TileFormat,
+    generate_ids: bool,
+    reporter: &dyn ProgressReporter,
+) -> Result<BuildAudit, String> {
+    write_pmtiles_inner(layer, output, &layer.name, options, max_zoom, categories,
+        format, generate_ids, reporter)
+}
+
+fn write_pmtiles_inner(
+    source: &dyn PointSource,
+    output: &str,
+    name: &str,
+    options: Options,
+    max_zoom: u8,
+    categories: &Categories,
+    format: TileFormat,
+    generate_ids: bool,
+    reporter: &dyn ProgressReporter,
+) -> Result<BuildAudit, String> {
     options.validate()?;
+    if max_zoom < options.max_zoom || max_zoom > 30 {
+        return Err("Output max_zoom must be between cluster_maxzoom and 30".into());
+    }
     if source.len() == 0 || name.is_empty() {
         return Err("Empty cluster source/layer".into());
     }
@@ -411,7 +460,7 @@ pub fn write_pmtiles(
         return Err("Cluster tile budget must be positive".into());
     }
     reporter.report("  Building the global Supercluster hierarchy ...");
-    let stats = supercluster::build(&input, options, |zoom, level| {
+    let stats = supercluster::build_with_points(&input, options, max_zoom, |zoom, level| {
         let mut actual = vec![0u64; expected.len()];
         let mut total = 0;
         let mut singles = 0;
@@ -445,13 +494,14 @@ pub fn write_pmtiles(
             &names,
             original_width,
             categories.column.is_some(),
+            generate_ids,
             originals.as_mut().unwrap(),
             format,
             tile_budget,
             &mut spool,
         )?;
         reporter.report(&format!(
-            "  Zoom {zoom}: {} representatives ({singles} singletons), {} people, {} tiles",
+            "  Zoom {zoom}: {} representatives ({singles} singletons), {} points, {} tiles",
             level.len(),
             total,
             spool.len() - before
@@ -469,7 +519,7 @@ pub fn write_pmtiles(
     source.check_unchanged()?;
     reporter.report(&format!("  Writing {} cluster tiles ...", spool.len()));
     let provenance = serde_json::json!({"algorithm":"Supercluster 8.0.1 / KDBush 4.1.0 compact Rust port",
-        "radius":options.radius,"extent":512,"min_points":options.min_points,"input":source.provenance(),
+        "radius":options.radius,"extent":512,"min_points":options.min_points,"cluster_maxzoom":options.max_zoom,"input":source.provenance(),
         "people":input.len(),"category":categories.column,"category_totals":expected,
         "levels":levels,"clustering":"global ordered raw points; no preaggregation or thinning"});
     pmtiles_writer::write_pmtiles_from_spool_metadata(
@@ -481,11 +531,11 @@ pub fn write_pmtiles(
             property_names: names,
             property_types: types,
             min_zoom: options.min_zoom,
-            max_zoom: options.max_zoom,
+            max_zoom,
             geometry_type: Some("Point".into()),
         }],
         options.min_zoom,
-        options.max_zoom,
+        max_zoom,
         bounds,
         Some(&provenance),
     )?;
@@ -505,6 +555,7 @@ fn emit_level(
     names: &[String],
     original_width: usize,
     categorical: bool,
+    generate_ids: bool,
     originals: &mut Originals,
     format: TileFormat,
     budget: usize,
@@ -552,6 +603,9 @@ fn emit_level(
                 if let Geometry::Point(point) = &mut f.geometry {
                     point.set_x(point.x() + wrap * 360.);
                 }
+            }
+            if !generate_ids {
+                f.id = None;
             }
             if p.source.is_some() {
                 f.properties
@@ -708,6 +762,63 @@ mod tests {
             values: vec![PropertyValue::Int(1), PropertyValue::Int(2)],
         }
     }
+    #[test]
+    fn in_memory_clusters_and_raw_points_share_an_archive() {
+        let mut s = source();
+        // R numeric and pandas float columns must match integer dictionaries.
+        s.features[0].properties[0] = PropertyValue::Double(1.0);
+        s.features[1].properties[0] = PropertyValue::Double(2.0);
+        s.features[2].properties[0] = PropertyValue::Null;
+        s.features[3].properties[0] = PropertyValue::Int(99);
+        let layer = LayerData {
+            name: "plants".into(), features: s.features, prop_names: s.names,
+            prop_types: s.types, min_zoom: 0, max_zoom: 3,
+        };
+        let dir = Scratch::new().unwrap();
+        for generate_ids in [true, false] {
+            let path = dir.0.join(format!("memory-{generate_ids}.pmtiles"));
+            let audit = write_layer(&layer, path.to_str().unwrap(), Options {
+                min_zoom: 0, max_zoom: 1, radius: 60., ..Default::default()
+            }, 3, &categories(), TileFormat::Mvt, generate_ids, &SilentReporter).unwrap();
+            assert_eq!(audit.categories, vec![1, 1, 2]);
+            assert_eq!(audit.levels.len(), 4);
+            assert!(audit.levels.iter().all(|l| l.people == 4 && l.categories == vec![1, 1, 2]));
+            let mut archive = PMTiles::from_reader(File::open(path).unwrap()).unwrap();
+            let ids: Vec<_> = archive.tile_ids().into_iter().copied().collect();
+            let mut raw_labels = BTreeSet::new();
+            let mut saw_cluster = false;
+            for id in ids {
+                let mut z = 0u8;
+                while z < 30 && id >= ((1u64 << (2 * (z + 1))) - 1) / 3 { z += 1; }
+                let compressed = archive.get_tile_by_id(id).unwrap().unwrap();
+                let mut data = Vec::new();
+                GzDecoder::new(&compressed[..]).read_to_end(&mut data).unwrap();
+                let tile = mvt::Tile::decode(&data[..]).unwrap();
+                let encoded = &tile.layers[0];
+                for f in &encoded.features {
+                    assert_eq!(f.id.is_some(), generate_ids);
+                    let props: HashMap<_, _> = f.tags.chunks_exact(2).map(|t|
+                        (encoded.keys[t[0] as usize].as_str(), &encoded.values[t[1] as usize])
+                    ).collect();
+                    let total: i64 = ["group:1", "group:2", "group:_other"].iter()
+                        .map(|key| props[key].int_value.unwrap()).sum();
+                    if z > 1 {
+                        assert!(!props.contains_key("cluster"));
+                        assert!(!props.contains_key("point_count"));
+                        assert_eq!(total, 1);
+                        raw_labels.insert((z, props["label"].string_value.clone().unwrap()));
+                    } else if props.contains_key("cluster") {
+                        saw_cluster = true;
+                        assert_eq!(props["point_count"].int_value.unwrap(), total);
+                        assert_eq!(props["cluster_expansion_zoom"].int_value.unwrap(), 2);
+                    }
+                }
+            }
+            assert!(saw_cluster);
+            assert_eq!(raw_labels.len(), 8); // Four original plants at both raw zooms.
+        }
+    }
+
     #[test]
     fn scratch_directories_are_private_and_unique_for_parallel_callers() {
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));

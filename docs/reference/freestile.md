@@ -23,7 +23,10 @@ freestile(
   simplification = TRUE,
   generate_ids = TRUE,
   overwrite = TRUE,
-  quiet = FALSE
+  quiet = FALSE,
+  category = NULL,
+  category_values = NULL,
+  cluster_min_points = 2L
 )
 ```
 
@@ -107,6 +110,23 @@ freestile(
 
   Logical. Whether to suppress progress messages (default FALSE).
 
+- category:
+
+  Character or NULL. A category column for a single POINT sf layer. Adds
+  category counts to clusters and singletons. Available in CRAN builds
+  without GeoParquet or DuckDB; requires jsonlite.
+
+- category_values:
+
+  Character or numeric vector. A dictionary of 1 to 64 distinct strings
+  or whole numbers within +/- (2^53 - 1). Missing or unlisted values
+  count toward `category:_other`.
+
+- cluster_min_points:
+
+  Integer. Minimum number of points in a categorical cluster (default
+  2).
+
 ## Value
 
 The output file path (invisibly).
@@ -115,6 +135,15 @@ The output file path (invisibly).
 
 Input data in any coordinate reference system (CRS) is automatically
 reprojected to WGS84 (EPSG:4326) before tiling.
+
+With `category`, clustering uses the ordered Supercluster algorithm with
+a 512-pixel tile extent. Input row order affects membership. Above
+`cluster_maxzoom`, the same archive contains individual points with
+their original attributes. The input and global clustering index stay in
+memory. Categorical clustering currently accepts a single POINT sf
+layer; leave `base_zoom` unset, omit `drop_rate` and `coalesce`, and
+keep `simplification = TRUE`. Calls without `category` retain the
+existing clustering algorithm.
 
 ## Examples
 

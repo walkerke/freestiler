@@ -301,12 +301,15 @@ freestile(pts, "nc_clustered.pmtiles",
 )
 ```
 
-To retain the mix of categories within clusters, use
-[`freestile_file()`](https://walker-data.com/freestiler/reference/freestile_file.md)
-with `category` and `category_values`. See [Point
+In the development version,
+[`freestile()`](https://walker-data.com/freestiler/reference/freestile.md)
+also accepts `category` and `category_values` directly for a POINT sf
+object, with no GeoParquet or DuckDB requirement. See [Point
 clustering](https://walker-data.com/freestiler/articles/point-clustering.md)
-for R and Python examples and the distinction between the two clustering
-paths.
+for a complete example that reads power plants into sf (or a
+GeoDataFrame in Python), builds one archive, and displays donut clusters
+with mapgl. Released 0.3.0 supports categorical clustering through
+[`freestile_file()`](https://walker-data.com/freestiler/reference/freestile_file.md).
 
 ### Feature coalescing
 

@@ -244,7 +244,7 @@ freestile(pts, "nc_clustered.pmtiles",
 )
 ```
 
-To retain the mix of categories within clusters, use `freestile_file()` with `category` and `category_values`. See [Point clustering](point-clustering.html) for R and Python examples and the distinction between the two clustering paths.
+In the development version, `freestile()` also accepts `category` and `category_values` directly for a POINT sf object, with no GeoParquet or DuckDB requirement. See [Point clustering](point-clustering.html) for a complete example that reads power plants into sf (or a GeoDataFrame in Python), builds one archive, and displays donut clusters with mapgl. Released 0.3.0 supports categorical clustering through `freestile_file()`.
 
 ### Feature coalescing
 
