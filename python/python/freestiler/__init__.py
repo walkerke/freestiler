@@ -95,6 +95,9 @@ def freestile(
     generate_ids: bool = True,
     overwrite: bool = True,
     quiet: bool = False,
+    category: str | None = None,
+    category_values: list | None = None,
+    cluster_min_points: int = 2,
 ) -> Path:
     """Create a PMTiles archive from geospatial data.
 
@@ -135,6 +138,17 @@ def freestile(
         Whether to overwrite existing output file (default True).
     quiet : bool
         Whether to suppress progress messages (default False).
+    category : str, optional
+        Category column for a single POINT GeoDataFrame. Uses the ordered
+        Supercluster engine without requiring GeoParquet or DuckDB. Row order
+        affects membership. Individual points above cluster_maxzoom are stored
+        in the same archive. Omit base_zoom, drop_rate and coalesce and keep
+        simplification=True. Input and clustering index remain in memory.
+    category_values : list, optional
+        Dictionary of 1 to 64 distinct strings or JS-safe integers.
+        Missing and unlisted values count toward category:_other.
+    cluster_min_points : int
+        Minimum points per categorical cluster (default 2).
 
     Returns
     -------
@@ -150,6 +164,39 @@ def freestile(
         raise FileExistsError(
             f"Output file already exists: {output}. Set overwrite=True to replace."
         )
+
+    categorical = category is not None or category_values is not None
+    if categorical:
+        import json
+        import math
+        if not isinstance(input, gpd.GeoDataFrame):
+            raise ValueError("Categorical clustering currently requires a single POINT GeoDataFrame")
+        if len(input) == 0 or input.geometry.isna().any() or input.geometry.is_empty.any() or not (input.geom_type == "Point").all():
+            raise ValueError("Categorical clustering requires non-empty POINT geometries only")
+        integer = lambda x: isinstance(x, (int, np.integer)) and not isinstance(x, (bool, np.bool_))
+        if not integer(min_zoom) or not integer(max_zoom) or not 0 <= min_zoom <= max_zoom <= 30:
+            raise ValueError("Invalid clustering zoom range")
+        if cluster_maxzoom is None:
+            cluster_maxzoom = max(min_zoom, max_zoom - 1)
+        if not integer(cluster_maxzoom) or not min_zoom <= cluster_maxzoom <= max_zoom:
+            raise ValueError("cluster_maxzoom must be an integer between min_zoom and max_zoom")
+        if cluster_distance is None or not math.isfinite(cluster_distance) or cluster_distance <= 0:
+            raise ValueError("Categorical clustering requires a positive cluster_distance")
+        if not integer(cluster_min_points) or not 1 <= cluster_min_points <= 2**31 - 1:
+            raise ValueError("cluster_min_points must be a positive integer")
+        if base_zoom is not None or drop_rate is not None or coalesce or simplification is not True:
+            raise ValueError("Categorical clustering conserves all points: leave base_zoom and drop_rate unset, coalesce=False, and simplification=True")
+        if not isinstance(category, str) or not category:
+            raise ValueError("category must name one column")
+        if category not in input.columns or category == input.geometry.name:
+            raise ValueError(f"Category column '{category}' not found")
+        if category_values is None or not 1 <= len(category_values) <= 64:
+            raise ValueError("category_values must contain 1 to 64 distinct strings or integers")
+        values = [int(v) if isinstance(v, np.integer) and not isinstance(v, np.bool_) else v for v in category_values]
+        if not (all(isinstance(v, str) for v in values) or all(type(v) is int and abs(v) <= 2**53 - 1 for v in values)) or len(set(values)) != len(values):
+            raise ValueError("category_values must be distinct, uniformly typed strings or JS-safe integers")
+    elif cluster_min_points != 2:
+        raise ValueError("cluster_min_points requires category and category_values")
 
     # Determine default layer_name
     if layer_name is None and isinstance(input, gpd.GeoDataFrame):
@@ -196,21 +243,29 @@ def freestile(
         rust_layers.append(layer_data)
 
     # Call Rust
-    result = _freestile(
-        layers=rust_layers,
-        output_path=str(output),
-        tile_format=tile_format,
-        min_zoom=min_zoom,
-        max_zoom=max_zoom,
-        base_zoom=base_zoom if base_zoom is not None else -1,
-        do_simplify=simplification,
-        generate_ids=generate_ids,
-        quiet=quiet,
-        drop_rate=drop_rate if drop_rate is not None else -1.0,
-        cluster_distance=cluster_distance if cluster_distance is not None else -1.0,
-        cluster_maxzoom=cluster_maxzoom if cluster_maxzoom is not None else -1,
-        do_coalesce=coalesce,
-    )
+    if categorical:
+        from freestiler._freestiler import _cluster_layers
+        _cluster_layers(
+            rust_layers, str(output), tile_format, min_zoom, max_zoom,
+            cluster_maxzoom, float(cluster_distance), cluster_min_points,
+            category, json.dumps(values), generate_ids, quiet,
+        )
+    else:
+        _freestile(
+            layers=rust_layers,
+            output_path=str(output),
+            tile_format=tile_format,
+            min_zoom=min_zoom,
+            max_zoom=max_zoom,
+            base_zoom=base_zoom if base_zoom is not None else -1,
+            do_simplify=simplification,
+            generate_ids=generate_ids,
+            quiet=quiet,
+            drop_rate=drop_rate if drop_rate is not None else -1.0,
+            cluster_distance=cluster_distance if cluster_distance is not None else -1.0,
+            cluster_maxzoom=cluster_maxzoom if cluster_maxzoom is not None else -1,
+            do_coalesce=coalesce,
+        )
 
     if not quiet:
         size = output.stat().st_size

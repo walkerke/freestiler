@@ -306,7 +306,16 @@ pub fn build(
     options: Options,
     mut emit: impl FnMut(u8, &Level<'_>) -> Result<(), String>,
 ) -> Result<Stats, String> {
-    run(input, options, false, |z, l, _| emit(z, l))
+    run(input, options, options.max_zoom, false, |z, l, _| emit(z, l))
+}
+/// Include unclustered point levels above the clustering cutoff.
+pub fn build_with_points(
+    input: &Input,
+    options: Options,
+    max_zoom: u8,
+    mut emit: impl FnMut(u8, &Level<'_>) -> Result<(), String>,
+) -> Result<Stats, String> {
+    run(input, options, max_zoom, false, |z, l, _| emit(z, l))
 }
 /// Diagnostic parent maps (previous-level position -> new-level position).
 /// No parent arrays are allocated on the normal build path.
@@ -315,15 +324,19 @@ pub fn build_traced(
     options: Options,
     emit: impl FnMut(u8, &Level<'_>, &[u32]) -> Result<(), String>,
 ) -> Result<Stats, String> {
-    run(input, options, true, emit)
+    run(input, options, options.max_zoom, true, emit)
 }
 fn run(
     input: &Input,
     options: Options,
+    max_zoom: u8,
     trace: bool,
     mut emit: impl FnMut(u8, &Level<'_>, &[u32]) -> Result<(), String>,
 ) -> Result<Stats, String> {
     options.validate()?;
+    if max_zoom < options.max_zoom || max_zoom > 30 {
+        return Err("Output max_zoom must be between cluster_maxzoom and 30".into());
+    }
     let mut arena = Arena {
         nodes: Vec::new(),
         counts: Vec::new(),
@@ -333,6 +346,11 @@ fn run(
     let mut refs = Refs::Source(input.len());
     let mut tree = KdBush::new(input.coords.iter().copied(), options.node_size)?;
     let mut stats = Stats::default();
+    stats.peak_accounted_bytes = input.bytes() + tree.bytes();
+    for zoom in ((options.max_zoom + 1)..=max_zoom).rev() {
+        emit(zoom, &Level { input, arena: &arena, refs: &refs, tree: &tree }, &[])?;
+        stats.levels.push((zoom, refs.len()));
+    }
     for zoom in (options.min_zoom..=options.max_zoom).rev() {
         let mut visited = Vec::new();
         visited

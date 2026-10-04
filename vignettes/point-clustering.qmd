@@ -220,6 +220,26 @@ The example explicitly groups less common fuels into `"Other"`, so those counts 
 
 ### Zooms and memory
 
+The development version also supports categorical clustering directly from a
+single POINT sf object or GeoDataFrame, without writing a GeoParquet file first:
+
+```{r}
+#| eval: false
+# Development version; not available in the released 0.3.0 packages.
+freestile(
+  plants, "power-plant-demo/plants-combined.pmtiles",
+  layer_name = "plants", min_zoom = 0, max_zoom = 14,
+  cluster_distance = 60, cluster_maxzoom = 9,
+  category = "fuel", category_values = fuels
+)
+```
+
+This archive contains clusters through zoom 9 and individual plants from zoom
+10 onward. The same arguments work with `freestile()` in Python. The in-memory
+path is included when building for CRAN; it needs neither GeoParquet nor DuckDB
+support. In R it requires `jsonlite`. Input and the global index stay in memory,
+and changing row order can change cluster membership.
+
 Categorical file clustering is experimental in 0.3.0 and uses Supercluster 8.0.1. It requires WGS84 POINT GeoParquet input and a dictionary of 1 to 64 distinct strings or whole numbers. Its radius is measured against a 512-pixel tile, and changing the physical row order of the input file can change cluster membership.
 
 Set `cluster_maxzoom` equal to `max_zoom`. Keep `base_zoom` unset and `simplification` at its default, and omit `drop_rate` and `coalesce` so all points contribute to the counts. The separate point archive above supplies the higher zooms.

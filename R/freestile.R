@@ -82,6 +82,23 @@ freestile_layer <- function(input, min_zoom = NULL, max_zoom = NULL) {
 #' @param overwrite Logical. Whether to overwrite existing output file
 #'   (default TRUE).
 #' @param quiet Logical. Whether to suppress progress messages (default FALSE).
+#' @param category Character or NULL. A category column for a single POINT sf
+#'   layer. Adds category counts to clusters and singletons. Available in CRAN
+#'   builds without GeoParquet or DuckDB; requires jsonlite.
+#' @param category_values Character or numeric vector. A dictionary of 1 to 64
+#'   distinct strings or whole numbers within +/- (2^53 - 1). Missing or unlisted
+#'   values count toward `category:_other`.
+#' @param cluster_min_points Integer. Minimum number of points in a categorical
+#'   cluster (default 2).
+#'
+#' @details With `category`, clustering uses the ordered Supercluster algorithm
+#'   with a 512-pixel tile extent. Input row order affects membership. Above
+#'   `cluster_maxzoom`, the same archive contains individual points with their
+#'   original attributes. The input and global clustering index stay in memory.
+#'   Categorical clustering currently accepts a single POINT sf layer; leave
+#'   `base_zoom` unset, omit `drop_rate` and `coalesce`, and keep
+#'   `simplification = TRUE`. Calls without `category` retain the existing
+#'   clustering algorithm.
 #'
 #' @return The output file path (invisibly).
 #'
@@ -123,7 +140,10 @@ freestile <- function(
     simplification = TRUE,
     generate_ids = TRUE,
     overwrite = TRUE,
-    quiet = FALSE
+    quiet = FALSE,
+    category = NULL,
+    category_values = NULL,
+    cluster_min_points = 2L
 ) {
   tile_format <- match.arg(tile_format, c("mvt", "mlt"))
 
@@ -132,6 +152,15 @@ freestile <- function(
   if (file.exists(output) && !overwrite) {
     stop("Output file already exists. Set `overwrite = TRUE` to replace it.",
       call. = FALSE)
+  }
+
+  categorical <- !is.null(category) || !is.null(category_values)
+  if (categorical) {
+    cluster_maxzoom <- .validate_cluster_sf(input, min_zoom, max_zoom,
+      cluster_distance, cluster_maxzoom, cluster_min_points, category,
+      category_values, base_zoom, drop_rate, coalesce, simplification)
+  } else if (!missing(cluster_min_points)) {
+    stop("cluster_min_points requires category and category_values.", call. = FALSE)
   }
 
   # Determine default layer_name from output if single-layer
@@ -162,7 +191,8 @@ freestile <- function(
     if (is.na(crs)) {
       warning(sprintf("Layer '%s' has no CRS. Assuming WGS84 (EPSG:4326).",
         l$name), call. = FALSE)
-    } else if (!sf::st_is_longlat(sf_obj)) {
+    } else if (!sf::st_is_longlat(sf_obj) ||
+               (categorical && !isTRUE(crs == sf::st_crs(4326)))) {
       if (!quiet) message(sprintf("  Transforming layer '%s' to WGS84...", l$name))
       sf_obj <- sf::st_transform(sf_obj, 4326)
     }
@@ -198,21 +228,29 @@ freestile <- function(
     )
   })
 
-  result <- rust_freestile(
-    layers = rust_layers,
-    output_path = output,
-    tile_format = tile_format,
-    global_min_zoom = as.integer(min_zoom),
-    global_max_zoom = as.integer(max_zoom),
-    base_zoom = if (is.null(base_zoom)) -1L else as.integer(base_zoom),
-    do_simplify = simplification,
-    generate_ids = generate_ids,
-    quiet = quiet,
-    drop_rate = if (is.null(drop_rate)) -1.0 else as.double(drop_rate),
-    cluster_distance = if (is.null(cluster_distance)) -1.0 else as.double(cluster_distance),
-    cluster_maxzoom = if (is.null(cluster_maxzoom)) -1L else as.integer(cluster_maxzoom),
-    do_coalesce = coalesce
-  )
+  if (categorical) {
+    result <- .Call(wrap__rust_cluster_layers, rust_layers, output, tile_format,
+      as.integer(min_zoom), as.integer(max_zoom), as.integer(cluster_maxzoom),
+      as.double(cluster_distance), as.integer(cluster_min_points), category,
+      jsonlite::toJSON(unname(category_values), auto_unbox = FALSE, digits = NA),
+      generate_ids, quiet)
+  } else {
+    result <- rust_freestile(
+      layers = rust_layers,
+      output_path = output,
+      tile_format = tile_format,
+      global_min_zoom = as.integer(min_zoom),
+      global_max_zoom = as.integer(max_zoom),
+      base_zoom = if (is.null(base_zoom)) -1L else as.integer(base_zoom),
+      do_simplify = simplification,
+      generate_ids = generate_ids,
+      quiet = quiet,
+      drop_rate = if (is.null(drop_rate)) -1.0 else as.double(drop_rate),
+      cluster_distance = if (is.null(cluster_distance)) -1.0 else as.double(cluster_distance),
+      cluster_maxzoom = if (is.null(cluster_maxzoom)) -1L else as.integer(cluster_maxzoom),
+      do_coalesce = coalesce
+    )
+  }
 
   if (startsWith(result, "Error:")) {
     stop(result, call. = FALSE)

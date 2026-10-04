@@ -590,6 +590,7 @@ fn _freestile_duckdb(
 
 #[pymodule]
 fn _freestiler(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(_cluster_layers, m)?)?;
     m.add_function(wrap_pyfunction!(_freestile, m)?)?;
     #[cfg(feature = "geoparquet")]
     m.add_function(wrap_pyfunction!(_cluster_file, m)?)?;
@@ -600,6 +601,38 @@ fn _freestiler(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "duckdb")]
     m.add_function(wrap_pyfunction!(_freestile_duckdb_query, m)?)?;
     Ok(())
+}
+
+#[pyfunction]
+fn _cluster_layers(
+    py: Python<'_>, layers: Vec<Py<PyAny>>, output_path: String,
+    tile_format: String, min_zoom: u8, max_zoom: u8, cluster_maxzoom: u8,
+    radius: f64, min_points: u32, category: String, category_values_json: String,
+    generate_ids: bool, quiet: bool,
+) -> PyResult<()> {
+    let data = parse_layers_from_py(py, &layers, generate_ids)?;
+    py.detach(move || {
+        let run = || -> Result<(), String> {
+            if data.len() != 1 {
+                return Err("Categorical clustering requires one POINT layer".into());
+            }
+            let format = match tile_format.as_str() {
+                "mvt" => TileFormat::Mvt, "mlt" => TileFormat::Mlt,
+                _ => return Err("Invalid tile format".into()),
+            };
+            let categories = freestiler_core::cluster_output::Categories::from_json(&category, &category_values_json)?;
+            let reporter: Box<dyn ProgressReporter> = if quiet {
+                Box::new(engine::SilentReporter)
+            } else { Box::new(PyReporter) };
+            freestiler_core::cluster_output::write_layer(&data[0], &output_path,
+                freestiler_core::supercluster::Options {
+                    min_zoom, max_zoom: cluster_maxzoom, radius, min_points,
+                    ..Default::default()
+                }, max_zoom, &categories, format, generate_ids, reporter.as_ref())?;
+            Ok(())
+        };
+        run().map_err(pyo3::exceptions::PyRuntimeError::new_err)
+    })
 }
 
 #[cfg(feature = "geoparquet")]
