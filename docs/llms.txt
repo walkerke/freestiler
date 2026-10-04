@@ -241,7 +241,8 @@ category counts, the most common category, its share, and ties.
 
 ## Categorical point clusters
 
-In the development version, pass a POINT sf object directly to
+With R development version 0.3.0.9000 or later from R-Universe, pass a
+POINT sf object directly to
 [`freestile()`](https://walker-data.com/freestiler/reference/freestile.md)
 to count categories within each cluster:
 

@@ -1,6 +1,6 @@
 # Changelog
 
-## freestiler (development version)
+## freestiler 0.3.0.9000
 
 - [`freestile()`](https://walker-data.com/freestiler/reference/freestile.md)
   now accepts `category`, `category_values`, and `cluster_min_points`

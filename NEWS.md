@@ -1,4 +1,4 @@
-# freestiler (development version)
+# freestiler 0.3.0.9000
 
 * `freestile()` now accepts `category`, `category_values`, and
   `cluster_min_points` for a single POINT sf object or GeoDataFrame. Category

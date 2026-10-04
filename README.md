@@ -182,7 +182,7 @@ For hexagons at every zoom, set `include_points = FALSE` and leave `base_zoom` u
 
 ## Categorical point clusters
 
-In the development version, pass a POINT sf object directly to `freestile()` to count categories within each cluster:
+With R development version 0.3.0.9000 or later from R-Universe, pass a POINT sf object directly to `freestile()` to count categories within each cluster:
 
 ```r
 freestile(

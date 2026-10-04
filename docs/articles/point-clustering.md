@@ -19,12 +19,11 @@ US power plants grouped into donut clusters by primary fuel.
 
 ### Install the packages
 
-This example uses the development version of freestiler; categorical
-clustering directly from sf objects and GeoDataFrames is not in the
-released 0.3.0 packages. The in-memory implementation is compatible with
-the CRAN build. Until the next CRAN release, install from R-Universe.
-Donut charts need mapgl 0.5.2 or later. Restart R before replacing an
-existing installation:
+This R example requires freestiler **0.3.0.9000 or later** from
+R-Universe and mapgl **0.5.2 or later**. CRAN 0.3.0 does not support
+categorical clustering directly from sf objects. The implementation is
+compatible with the CRAN build and will be included in the next CRAN
+release. Restart R before replacing an existing installation:
 
 ``` r
 
@@ -168,7 +167,9 @@ When finished, stop the tile server with `stop_server(port = 8082)`.
 
 In Python, read the data into a GeoDataFrame and pass it to
 [`freestile()`](https://walker-data.com/freestiler/reference/freestile.md)
-in the same way. Until the next PyPI release, install the development
+in the same way. This requires freestiler **0.3.1.dev0 or later**; PyPI
+0.3.0 does not support categorical clustering directly from
+GeoDataFrames. Until the next PyPI release, install the development
 version from GitHub (building from source requires Rust):
 
 ``` bash
