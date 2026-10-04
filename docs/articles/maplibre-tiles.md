@@ -62,6 +62,7 @@ as of v3.21), deck.gl, and more. You can switch formats with a single
 argument:
 
 ``` r
+
 freestile(nc, "nc_mlt.pmtiles", layer_name = "counties", tile_format = "mlt")
 ```
 

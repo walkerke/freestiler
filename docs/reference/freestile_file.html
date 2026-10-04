@@ -11,7 +11,7 @@ automatically reprojected to WGS84 (EPSG:4326) before tiling."><meta property="o
 
     <a class="navbar-brand me-2" href="../index.html">freestiler</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.2.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -24,6 +24,7 @@ automatically reprojected to WGS84 (EPSG:4326) before tiling."><meta property="o
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-articles" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Articles</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-articles"><li><a class="dropdown-item" href="../articles/getting-started.html">Getting Started</a></li>
     <li><a class="dropdown-item" href="../articles/mapping.html">Mapping with mapgl</a></li>
+    <li><a class="dropdown-item" href="../articles/point-clustering.html">Point clustering</a></li>
     <li><a class="dropdown-item" href="../articles/h3-hexagonal-binning.html">Hexagonal binning with H3</a></li>
     <li><hr class="dropdown-divider"></li>
     <li><a class="dropdown-item" href="../articles/maplibre-tiles.html">MapLibre Tiles (MLT)</a></li>
@@ -67,7 +68,10 @@ automatically reprojected to WGS84 (EPSG:4326) before tiling.</p>
 <span>  simplification <span class="op">=</span> <span class="cn">TRUE</span>,</span>
 <span>  overwrite <span class="op">=</span> <span class="cn">TRUE</span>,</span>
 <span>  quiet <span class="op">=</span> <span class="cn">FALSE</span>,</span>
-<span>  engine <span class="op">=</span> <span class="st">"geoparquet"</span></span>
+<span>  engine <span class="op">=</span> <span class="st">"geoparquet"</span>,</span>
+<span>  category <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  category_values <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  cluster_min_points <span class="op">=</span> <span class="fl">2L</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
 
@@ -139,6 +143,22 @@ grid (default TRUE).</p></dd>
 <dd><p>Character. Backend engine: <code>"geoparquet"</code> (default, for
 GeoParquet files) or <code>"duckdb"</code> (for any file format DuckDB supports).</p></dd>
 
+
+<dt id="arg-category">category<a class="anchor" aria-label="anchor" href="#arg-category"></a></dt>
+<dd><p>Character or NULL. For the ordered categorical clustering
+increment, the attribute whose counts are carried into each cluster.</p></dd>
+
+
+<dt id="arg-category-values">category_values<a class="anchor" aria-label="anchor" href="#arg-category-values"></a></dt>
+<dd><p>Character or numeric vector. An explicit dictionary
+of 1–64 strings or JS-safe integers. Missing/unlisted values count as
+<code>category:_other</code>; singleton attributes are preserved.</p></dd>
+
+
+<dt id="arg-cluster-min-points">cluster_min_points<a class="anchor" aria-label="anchor" href="#arg-cluster-min-points"></a></dt>
+<dd><p>Integer. Minimum population to form a cluster
+(default 2), used by the categorical clustering increment.</p></dd>
+
 </dl></div>
     <div class="section level2">
     <h2 id="value">Value<a class="anchor" aria-label="anchor" href="#value"></a></h2>
@@ -146,21 +166,34 @@ GeoParquet files) or <code>"duckdb"</code> (for any file format DuckDB supports)
     </div>
     <div class="section level2">
     <h2 id="details">Details<a class="anchor" aria-label="anchor" href="#details"></a></h2>
-    <p>The GeoParquet engine requires compilation with <code>FREESTILER_GEOPARQUET=true</code>.
+    <p>The GeoParquet engine and categorical file clustering require GeoParquet
+support, available in the R-Universe build: <code>install.packages("freestiler", repos = c("https://walkerke.r-universe.dev",
+"https://cloud.r-project.org"))</code>. Restart R before reinstalling.
+Rust DuckDB and streaming are available on macOS and Linux; Windows uses
+the R <code>duckdb</code> backend for non-streaming queries.
 The DuckDB engine uses the Rust DuckDB backend when included in the build
 (enabled by default for native builds), or falls back to the R <code>duckdb</code>
 package. Control backend selection with
 <code>options(freestiler.duckdb_backend = "auto"|"rust"|"r")</code>.</p>
+<p>With <code>category</code>, the GeoParquet engine uses the pinned Supercluster 8.0.1
+algorithm in physical file order, with <code>cluster_distance</code> measured in pixels
+relative to a 512-pixel tile. This initial increment requires
+<code>cluster_maxzoom = max_zoom</code>, <code>base_zoom = NULL</code>, <code>simplification = TRUE</code>,
+and no <code>drop_rate</code>/<code>coalesce</code>; use a separate dot
+source above the clustered zooms. It preserves counts at every clustered zoom
+and writes <code>cluster_expansion_zoom</code> for click-to-expand. Ordering changes
+membership. The compact global index remains resident: this is not an
+out-of-core clustering or fixed-RAM guarantee. The existing noncategorical
+clustering path is not yet migrated to this algorithm.</p>
     </div>
 
     <div class="section level2">
     <h2 id="ref-examples">Examples<a class="anchor" aria-label="anchor" href="#ref-examples"></a></h2>
-    <div class="sourceCode"><pre class="sourceCode r"><code><span class="r-in"><span><span class="kw">if</span> <span class="op">(</span><span class="cn">FALSE</span><span class="op">)</span> <span class="op">{</span> <span class="co"># \dontrun{</span></span></span>
-<span class="r-in"><span><span class="fu">freestile_file</span><span class="op">(</span><span class="st">"data.parquet"</span>, <span class="st">"output.pmtiles"</span><span class="op">)</span></span></span>
-<span class="r-in"><span><span class="fu">freestile_file</span><span class="op">(</span><span class="st">"data.gpkg"</span>, <span class="st">"output.pmtiles"</span>, engine <span class="op">=</span> <span class="st">"duckdb"</span><span class="op">)</span></span></span>
-<span class="r-in"><span><span class="op">}</span> <span class="co"># }</span></span></span>
-<span class="r-in"><span></span></span>
-</code></pre></div>
+    <div class="sourceCode"><pre class="sourceCode r"><code><span><span class="kw">if</span> <span class="op">(</span><span class="cn">FALSE</span><span class="op">)</span> <span class="op">{</span> <span class="co"># \dontrun{</span></span>
+<span><span class="fu">freestile_file</span><span class="op">(</span><span class="st">"data.parquet"</span>, <span class="st">"output.pmtiles"</span><span class="op">)</span></span>
+<span><span class="fu">freestile_file</span><span class="op">(</span><span class="st">"data.gpkg"</span>, <span class="st">"output.pmtiles"</span>, engine <span class="op">=</span> <span class="st">"duckdb"</span><span class="op">)</span></span>
+<span><span class="op">}</span> <span class="co"># }</span></span>
+<span></span></code></pre></div>
     </div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>
     </nav></aside></div>
@@ -171,7 +204,7 @@ package. Control backend selection with
 </div>
 
 <div class="pkgdown-footer-right">
-  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.2.0.</p>
+  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.2.1.</p>
 </div>
 
     </footer></div>

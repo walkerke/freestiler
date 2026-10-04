@@ -12,6 +12,7 @@ First, pull block group geometries and income data with
 [tidycensus](https://walker-data.com/tidycensus/):
 
 ``` r
+
 library(tidycensus)
 library(freestiler)
 options(tigris_use_cache = TRUE)
@@ -47,6 +48,7 @@ For a fast look at your tileset, use
 [`view_tiles()`](https://walker-data.com/freestiler/reference/view_tiles.md):
 
 ``` r
+
 view_tiles("us_income.pmtiles")
 ```
 
@@ -68,6 +70,7 @@ require a server that supports CORS and HTTP range requests —
 handles both.
 
 ``` r
+
 library(mapgl)
 
 serve_tiles("us_income.pmtiles")
@@ -76,6 +79,7 @@ serve_tiles("us_income.pmtiles")
 Now add the tileset as a source and style it:
 
 ``` r
+
 maplibre(
   style = openfreemap_style("positron"),
   bounds = c(-125, 24, -66, 50), 
@@ -132,6 +136,7 @@ For line data, use
 [`add_line_layer()`](https://walker-data.com/mapgl/reference/add_line_layer.html):
 
 ``` r
+
 maplibre() |>
   add_pmtiles_source(
     id = "roads-src",
@@ -150,6 +155,7 @@ For point data, use
 [`add_circle_layer()`](https://walker-data.com/mapgl/reference/add_circle_layer.html):
 
 ``` r
+
 maplibre() |>
   add_pmtiles_source(
     id = "pts-src",
@@ -173,6 +179,7 @@ If your tileset has multiple layers (created with a named list in
 add each layer separately — they share the same source:
 
 ``` r
+
 maplibre() |>
   add_pmtiles_source(
     id = "nc-src",
@@ -205,6 +212,7 @@ the experimental [MapLibre Tiles
 format:
 
 ``` r
+
 freestile(bgs, "us_income_mlt.pmtiles",
   layer_name = "income",
   tile_format = "mlt"
@@ -237,5 +245,6 @@ example.
 When you’re done viewing with the built-in server, stop it with:
 
 ``` r
+
 stop_server()
 ```

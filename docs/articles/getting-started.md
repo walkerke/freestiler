@@ -16,26 +16,48 @@ a next-generation columnar format. See the [MapLibre
 Tiles](https://walker-data.com/freestiler/articles/maplibre-tiles.md)
 article for more on the differences.
 
-Input data in any coordinate reference system is automatically
-reprojected to WGS84 (EPSG:4326) before tiling, so you don’t need to
-worry about CRS transformations.
+sf inputs and CRS-tagged DuckDB geometry are reprojected to WGS84
+(EPSG:4326) before tiling. When a query creates geometry from
+coordinates, use longitude and latitude in that order. Categorical file
+clustering requires a GeoParquet file already in WGS84.
 
 ### Installation
 
-Install from [r-universe](https://walkerke.r-universe.dev):
+Install from CRAN for tiling sf objects, including ordinary point
+clustering and H3 binning:
 
 ``` r
+
+install.packages("freestiler")
+```
+
+For native GeoParquet input, categorical file clustering, or streaming
+point queries, install from
+[R-Universe](https://walkerke.r-universe.dev). Restart R before
+replacing an existing installation:
+
+``` r
+
 install.packages(
   "freestiler",
   repos = c("https://walkerke.r-universe.dev", "https://cloud.r-project.org")
 )
 ```
 
-The r-universe build includes the Rust DuckDB backend on macOS and
-Linux, which powers the streaming point pipeline in
-[`freestile_query()`](https://walker-data.com/freestiler/reference/freestile_query.md).
-You can also install from GitHub with
-`devtools::install_github("walkerke/freestiler")`.
+The builds differ in their optional dependencies:
+
+| Feature | R: CRAN | R: R-Universe | Python: PyPI wheels |
+|----|----|----|----|
+| In-memory tiling | sf | sf | GeoDataFrame |
+| Native GeoParquet input and categorical file clusters | No | Yes | Yes |
+| DuckDB file input and SQL queries | R `duckdb` fallback | Native on macOS/Linux; R fallback on Windows | Native |
+| Streaming point queries | No | macOS/Linux | Yes |
+| H3 binning | With R `DBI` and `duckdb` | With R `DBI` and `duckdb` | With the `h3` extra |
+
+The R DuckDB fallback loads query results into an sf object before
+tiling. Install `DBI` and `duckdb` to use it. H3 binning uses the host
+language’s DuckDB package and is available with the CRAN build; it does
+not require native Rust DuckDB.
 
 For Python, see the [Python
 Setup](https://walker-data.com/freestiler/articles/python.md) article.
@@ -47,6 +69,7 @@ The main function is
 Let’s tile the North Carolina counties dataset that ships with sf:
 
 ``` r
+
 library(sf)
 library(freestiler)
 
@@ -70,6 +93,7 @@ Let’s tile all 242,000 US block groups from the
 the national level down to individual neighborhoods:
 
 ``` r
+
 library(tigris)
 options(tigris_use_cache = TRUE)
 
@@ -92,6 +116,7 @@ which starts a local HTTP server and creates an interactive map in one
 step:
 
 ``` r
+
 view_tiles("us_bgs.pmtiles")
 ```
 
@@ -120,6 +145,7 @@ including both MapLibre GL JS and Mapbox GL JS. For potentially smaller
 files with polygon-heavy data, you can use the experimental MLT format:
 
 ``` r
+
 freestile(nc, "nc_mlt.pmtiles", layer_name = "counties", tile_format = "mlt")
 ```
 
@@ -128,6 +154,7 @@ freestile(nc, "nc_mlt.pmtiles", layer_name = "counties", tile_format = "mlt")
 Use `min_zoom` and `max_zoom` to set the zoom range for your tileset:
 
 ``` r
+
 freestile(nc, "nc_z4_10.pmtiles",
   layer_name = "counties",
   min_zoom = 4,
@@ -143,6 +170,7 @@ even coverage; polygons and lines are thinned by area. The `base_zoom`
 parameter controls the zoom level above which all features are kept:
 
 ``` r
+
 freestile(nc, "nc_dropping.pmtiles",
   layer_name = "counties",
   drop_rate = 2.5,
@@ -157,6 +185,7 @@ This is useful for large GeoParquet files or other formats you’d rather
 not pull into memory. Non-WGS84 files are automatically reprojected:
 
 ``` r
+
 # GeoParquet
 freestile_file("census_blocks.parquet", "blocks.pmtiles")
 
@@ -171,17 +200,26 @@ the results directly into the tiling engine. This lets you filter, join,
 and transform your data with SQL before tiling:
 
 ``` r
+
 freestile_query(
   "SELECT * FROM ST_Read('counties.shp') WHERE pop > 50000",
   "large_counties.pmtiles"
 )
 ```
 
+CRS-tagged query results are automatically reprojected by the native
+DuckDB reader. With the R fallback, always pass `source_crs`, for
+example `"EPSG:4326"` when the query already returns WGS84. Native
+GeoParquet and DuckDB readers, along with the R DuckDB fallback, write
+dates as `YYYY-MM-DD` text and timestamps with a `T` separator. Zoned
+timestamps use UTC with a `Z` suffix. Missing values remain missing.
+
 For very large point datasets, set `streaming = "always"` to use the
 streaming pipeline, which avoids loading the full query result into
 memory:
 
 ``` r
+
 freestile_query(
   query = "SELECT naics, state, ST_Point(lon, lat) AS geometry FROM jobs_dots",
   output = "us_jobs_dots.pmtiles",
@@ -205,6 +243,31 @@ into a 2.3 GB PMTiles archive in about 12 minutes.
 
 ![](images/paste-2.png)
 
+### Planning a large job
+
+Streaming currently supports POINT queries without clustering. Line and
+polygon inputs still need memory for the decoded geometries, even though
+encoded tiles are written to a temporary file as they are produced.
+Categorical clustering keeps its global point index in memory, and H3
+binning keeps the output hexagons in memory.
+
+Leave space for both temporary files and the final PMTiles archive.
+Streaming also writes point partitions and may spill DuckDB work to
+disk, so temporary storage can be substantially larger than the finished
+map. Select only the attributes you need in the query.
+
+For streaming jobs, these environment variables can help:
+
+| Variable | Purpose |
+|----|----|
+| `FREESTILER_TEMP_DIR` | Put temporary partitions and DuckDB spill files on a disk with enough space. |
+| `FREESTILER_DUCKDB_MEMORY` | Set DuckDB’s memory limit, such as `4GB`. This is not a limit on the whole process. |
+| `FREESTILER_STREAM_WORKERS` | Number of partitions tiled at once; defaults to 1. More workers need more memory. |
+
+The output file is replaced only after a successful build. If a dense
+tile exceeds a memory budget, try `drop_rate` or a higher `min_zoom`
+before increasing the budget.
+
 ### Multi-layer tilesets
 
 Pass a named list to create multi-layer tilesets. Use
@@ -212,6 +275,7 @@ Pass a named list to create multi-layer tilesets. Use
 if you want per-layer zoom control:
 
 ``` r
+
 pts <- st_centroid(nc)
 
 freestile(
@@ -229,12 +293,20 @@ For point layers, `cluster_distance` merges nearby points into clusters
 with a `point_count` attribute:
 
 ``` r
+
 freestile(pts, "nc_clustered.pmtiles",
   layer_name = "centroids",
   cluster_distance = 50,
   cluster_maxzoom = 8
 )
 ```
+
+To retain the mix of categories within clusters, use
+[`freestile_file()`](https://walker-data.com/freestiler/reference/freestile_file.md)
+with `category` and `category_values`. See [Point
+clustering](https://walker-data.com/freestiler/articles/point-clustering.md)
+for R and Python examples and the distinction between the two clustering
+paths.
 
 ### Feature coalescing
 
@@ -243,6 +315,7 @@ within each tile. Lines sharing endpoints are joined, and polygons are
 grouped into MultiPolygons:
 
 ``` r
+
 freestile(nc, "nc_coalesced.pmtiles",
   layer_name = "counties",
   coalesce = TRUE

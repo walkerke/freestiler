@@ -5,6 +5,12 @@
 
 **freestiler** creates [PMTiles](https://github.com/protomaps/PMTiles) vector tilesets from R and Python. Give it an sf object, a file on disk, or a DuckDB SQL query, and it writes a single `.pmtiles` file you can serve from anywhere. The tiling engine is written in Rust and runs in-process, so there's nothing else to install.
 
+## New in 0.3.0
+
+Build clusters with category counts, create hexagon-only maps with category shares, and stream large point datasets from DuckDB. This release also reduces memory use when writing tiles and fixes date, CRS, and line-encoding issues. See the [changelog](https://walker-data.com/freestiler/news/index.html) for details.
+
+Explore the [2020 Census race and ethnicity map](https://walker-data.com/maps/census-2020/race.html) and [age map](https://walker-data.com/maps/census-2020/age.html) to see dots, categorical hexagons, and donut clusters together.
+
 ## Installation
 
 ### R
@@ -43,6 +49,8 @@ pip install freestiler
 Published PyPI wheels currently target Python 3.9 through 3.14.
 
 See the [Python Setup](https://walker-data.com/freestiler/articles/python.html) article for more details.
+
+The [installation guide](https://walker-data.com/freestiler/articles/getting-started.html#installation) explains which features each build includes. PyPI wheels include native GeoParquet and DuckDB support.
 
 ## Quick start
 
@@ -170,6 +178,23 @@ view_h3_tiles("wind.pmtiles", agg_column = "n")
 
 Pass `fade = TRUE` to cross-fade between resolutions instead of swapping cleanly. Requires DuckDB and its [H3 community extension](https://duckdb.org/community_extensions/extensions/h3); see the [Hexagonal binning with H3](https://walker-data.com/freestiler/articles/h3-hexagonal-binning.html) article.
 
+For hexagons at every zoom, set `include_points = FALSE` and leave `base_zoom` unset. Add `category` and `category_values` to retain category counts, the most common category, its share, and ties.
+
+## Categorical point clusters
+
+`freestile_file()` can count categories within each cluster, so a map can show the mix of groups as well as the total:
+
+```r
+freestile_file(
+  "places.parquet", "place_clusters.pmtiles",
+  layer_name = "places", min_zoom = 0, max_zoom = 10,
+  cluster_distance = 60, cluster_maxzoom = 10,
+  category = "kind", category_values = c("park", "museum", "library")
+)
+```
+
+This requires POINT GeoParquet input and the R-Universe build (or the Python package). See [Point clustering](https://walker-data.com/freestiler/articles/point-clustering.html) for the output properties, Python example, and current limits.
+
 ## Multi-layer tilesets
 
 ```r
@@ -192,5 +217,7 @@ freestiler defaults to [Mapbox Vector Tiles (MVT)](https://github.com/mapbox/vec
 
 - [Getting Started](https://walker-data.com/freestiler/articles/getting-started.html) - full tutorial
 - [Mapping with mapgl](https://walker-data.com/freestiler/articles/mapping.html) - viewing and styling tiles with mapgl
+- [Point clustering](https://walker-data.com/freestiler/articles/point-clustering.html) - clusters with category counts
+- [Hexagonal binning with H3](https://walker-data.com/freestiler/articles/h3-hexagonal-binning.html) - counts, summaries, and categorical hexagons
 - [MapLibre Tiles (MLT)](https://walker-data.com/freestiler/articles/maplibre-tiles.html) - MLT vs MVT and when to use each
 - [Python Setup](https://walker-data.com/freestiler/articles/python.html) - Python installation and usage

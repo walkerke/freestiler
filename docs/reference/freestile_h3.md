@@ -8,6 +8,10 @@ mean, etc.) are computed in DuckDB via the H3 community extension; the
 function then assembles the per-resolution hex layers and the raw-point
 layer via
 [`freestile()`](https://walker-data.com/freestiler/reference/freestile.md).
+Set `include_points = FALSE` to build only hexagons, for example when an
+existing point archive supplies the close-up view. Aggregation happens
+in DuckDB, but all resulting hex layers are still materialized for
+tiling; this is not a bounded-memory polygon pipeline.
 
 ## Usage
 
@@ -28,7 +32,10 @@ freestile_h3(
   fade = FALSE,
   fade_overlap = 1L,
   overwrite = TRUE,
-  quiet = FALSE
+  quiet = FALSE,
+  include_points = TRUE,
+  category = NULL,
+  category_values = NULL
 )
 ```
 
@@ -84,11 +91,12 @@ freestile_h3(
 
   Optional override of the zoom -\> H3 resolution mapping. Accepts
   `NULL` (use built-in defaults), an unnamed integer vector with
-  `length(min_zoom:(base_zoom - 1L))` entries mapped positionally, or a
-  named integer vector with names that parse to integer zoom levels
-  (sparse overrides; defaults fill the rest). All resolutions must be
-  integers in `0:15`. The same resolution appearing in non-contiguous
-  zoom runs (e.g. zooms 4–5 and 8) is rejected.
+  `length(min_zoom:(base_zoom - 1L))` entries mapped positionally
+  (`length(min_zoom:max_zoom)` for aggregate-only output), or a named
+  integer vector with names that parse to integer zoom levels (sparse
+  overrides; defaults fill the rest). All resolutions must be integers
+  in `0:15`. The same resolution appearing in non-contiguous zoom runs
+  (e.g. zooms 4–5 and 8) is rejected.
 
 - source_crs:
 
@@ -128,6 +136,31 @@ freestile_h3(
 - quiet:
 
   Logical. Suppress progress messages (default `FALSE`).
+
+- include_points:
+
+  Logical. Include the raw-point layer (default `TRUE`). Set `FALSE` for
+  aggregate-only output over the complete `min_zoom:max_zoom` range;
+  `base_zoom` must then be `NULL`, and positional `h3_resolutions` must
+  cover that complete range. Hex geometries are still held in memory.
+
+- category:
+
+  Optional categorical column to summarize. Adds `point_count`,
+  per-category counts named `"<category>:<value>"`, and
+  `modal_category`, `modal_count`, `modal_share`, and `modal_tie`. Ties
+  have no selected category.
+
+- category_values:
+
+  Optional character or whole-number category dictionary (at most 64
+  values). If `NULL`, infer it from the input. NULL and unlisted values
+  contribute to `<category>:_other`, including in the mode. `_other` and
+  `_total` are reserved. Counts are checked for exact integer transport
+  up to 2^53 - 1; these are counts of input records, not weighted
+  totals. Category labels must be unique ignoring case. Modal labels are
+  strings, even for numeric categories; tied labels are missing in the
+  encoded tile.
 
 ## Value
 
@@ -194,5 +227,11 @@ freestile_h3(pts, "wind_fade.pmtiles",
   agg = "count",
   min_zoom = 2, max_zoom = 12, base_zoom = 10,
   fade = TRUE)
+
+# Categorical hexes only; all category counts remain available for styling.
+pts$group <- sample(c("a", "b", "c"), nrow(pts), replace = TRUE)
+freestile_h3(pts, "groups.pmtiles", include_points = FALSE,
+  category = "group", category_values = c("a", "b", "c"),
+  min_zoom = 3, max_zoom = 8)
 } # }
 ```

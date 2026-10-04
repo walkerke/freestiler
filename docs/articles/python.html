@@ -28,7 +28,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">freestiler</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.2.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -43,6 +43,7 @@
   <ul class="dropdown-menu" aria-labelledby="dropdown-articles">
 <li><a class="dropdown-item" href="../articles/getting-started.html">Getting Started</a></li>
     <li><a class="dropdown-item" href="../articles/mapping.html">Mapping with mapgl</a></li>
+    <li><a class="dropdown-item" href="../articles/point-clustering.html">Point clustering</a></li>
     <li><a class="dropdown-item" href="../articles/h3-hexagonal-binning.html">Hexagonal binning with H3</a></li>
     <li><hr class="dropdown-divider"></li>
     <li><a class="dropdown-item" href="../articles/maplibre-tiles.html">MapLibre Tiles (MLT)</a></li>
@@ -82,49 +83,66 @@
 </h3>
 <p>Install from PyPI:</p>
 <div class="sourceCode" id="cb1"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install freestiler</span></code></pre></div>
-<p>Published wheels include the full feature set: GeoPandas input, direct file tiling, DuckDB-backed file input, and SQL query support. Supported wheel targets are Python 3.9 through 3.14.</p>
+<p>The 0.3.0 wheels include GeoPandas input, native GeoParquet and DuckDB readers, streaming point queries, and categorical file clustering. Wheels are available for Python 3.9 through 3.14 on Linux x86-64, Windows x86-64, and macOS Apple Silicon. Other platforms need a source build.</p>
+<p>For H3 binning, also install the Python DuckDB dependency:</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install <span class="st">'freestiler[h3]'</span></span></code></pre></div>
 </section><section class="level3"><h3 id="building-from-source">Building from source<a class="anchor" aria-label="anchor" href="#building-from-source"></a>
 </h3>
 <p>You only need a Rust toolchain if a wheel isn’t available for your platform or you want an editable local build:</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> clone https://github.com/walkerke/freestiler.git</span>
-<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> freestiler/python</span>
-<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-m</span> venv .venv</span>
-<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="bu">source</span> .venv/bin/activate</span>
-<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install maturin</span>
-<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-m</span> maturin develop <span class="at">--release</span></span></code></pre></div>
+<div class="sourceCode" id="cb3"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> clone https://github.com/walkerke/freestiler.git</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> freestiler/python</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-m</span> venv .venv</span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a><span class="bu">source</span> .venv/bin/activate</span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install maturin</span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> <span class="at">-m</span> maturin develop <span class="at">--release</span></span></code></pre></div>
 </section><section class="level3"><h3 id="basic-usage">Basic usage<a class="anchor" aria-label="anchor" href="#basic-usage"></a>
 </h3>
 <p>The Python API mirrors R closely. Here’s the equivalent of the North Carolina example from the Getting Started article:</p>
-<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> geopandas <span class="im">as</span> gpd</span>
-<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> freestiler <span class="im">import</span> freestile</span>
-<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>url <span class="op">=</span> <span class="st">"https://raw.githubusercontent.com/r-spatial/sf/main/inst/gpkg/nc.gpkg"</span></span>
-<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>gdf <span class="op">=</span> gpd.read_file(url)</span>
-<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a>freestile(gdf, <span class="st">"nc_counties.pmtiles"</span>, layer_name<span class="op">=</span><span class="st">"counties"</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> geopandas <span class="im">as</span> gpd</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> freestiler <span class="im">import</span> freestile</span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>url <span class="op">=</span> <span class="st">"https://raw.githubusercontent.com/r-spatial/sf/main/inst/gpkg/nc.gpkg"</span></span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>gdf <span class="op">=</span> gpd.read_file(url)</span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>freestile(gdf, <span class="st">"nc_counties.pmtiles"</span>, layer_name<span class="op">=</span><span class="st">"counties"</span>)</span></code></pre></div>
 <p>Multi-layer tilesets use a dictionary instead of R’s named list:</p>
-<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> freestiler <span class="im">import</span> freestile, freestile_layer</span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>centroids <span class="op">=</span> gdf.copy()</span>
-<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>centroids.geometry <span class="op">=</span> gdf.geometry.centroid</span>
-<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>freestile(</span>
-<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>    {</span>
-<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>        <span class="st">"counties"</span>: freestile_layer(gdf, min_zoom<span class="op">=</span><span class="dv">0</span>, max_zoom<span class="op">=</span><span class="dv">10</span>),</span>
-<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a>        <span class="st">"centroids"</span>: freestile_layer(centroids, min_zoom<span class="op">=</span><span class="dv">6</span>, max_zoom<span class="op">=</span><span class="dv">14</span>),</span>
-<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a>    },</span>
-<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a>    <span class="st">"nc_layers.pmtiles"</span></span>
-<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
-<p>File input and DuckDB queries work the same way:</p>
-<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> freestiler <span class="im">import</span> freestile_file, freestile_query</span>
+<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> freestiler <span class="im">import</span> freestile, freestile_layer</span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>freestile_file(<span class="st">"census_blocks.parquet"</span>, <span class="st">"blocks.pmtiles"</span>)</span>
-<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>freestile_query(</span>
-<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>    query<span class="op">=</span><span class="st">"SELECT * FROM read_parquet('blocks.parquet') WHERE state = 'NC'"</span>,</span>
-<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>    output<span class="op">=</span><span class="st">"nc_blocks.pmtiles"</span>,</span>
-<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>    layer_name<span class="op">=</span><span class="st">"blocks"</span></span>
-<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>centroids <span class="op">=</span> gdf.copy()</span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>centroids.geometry <span class="op">=</span> gdf.geometry.centroid</span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>freestile(</span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>    {</span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>        <span class="st">"counties"</span>: freestile_layer(gdf, min_zoom<span class="op">=</span><span class="dv">0</span>, max_zoom<span class="op">=</span><span class="dv">10</span>),</span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a>        <span class="st">"centroids"</span>: freestile_layer(centroids, min_zoom<span class="op">=</span><span class="dv">6</span>, max_zoom<span class="op">=</span><span class="dv">14</span>),</span>
+<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a>    },</span>
+<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a>    <span class="st">"nc_layers.pmtiles"</span></span>
+<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<p>File input and DuckDB queries work the same way:</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> freestiler <span class="im">import</span> freestile_file, freestile_query</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>freestile_file(<span class="st">"census_blocks.parquet"</span>, <span class="st">"blocks.pmtiles"</span>)</span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a>freestile_query(</span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a>    query<span class="op">=</span><span class="st">"SELECT * FROM read_parquet('blocks.parquet') WHERE state = 'NC'"</span>,</span>
+<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a>    output<span class="op">=</span><span class="st">"nc_blocks.pmtiles"</span>,</span>
+<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a>    layer_name<span class="op">=</span><span class="st">"blocks"</span></span>
+<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+</section><section class="level3"><h3 id="large-point-datasets">Large point datasets<a class="anchor" aria-label="anchor" href="#large-point-datasets"></a>
+</h3>
+<p>Use <code>streaming="always"</code> to process a POINT query in disk-backed partitions:</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>freestile_query(</span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">"SELECT kind, ST_Point(lon, lat) AS geometry FROM read_parquet('places.parquet')"</span>,</span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">"places.pmtiles"</span>,</span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a>    layer_name<span class="op">=</span><span class="st">"places"</span>,</span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a>    min_zoom<span class="op">=</span><span class="dv">3</span>,</span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a>    max_zoom<span class="op">=</span><span class="dv">14</span>,</span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a>    base_zoom<span class="op">=</span><span class="dv">14</span>,</span>
+<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a>    drop_rate<span class="op">=</span><span class="fl">2.5</span>,</span>
+<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a>    streaming<span class="op">=</span><span class="st">"always"</span>,</span>
+<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<p>This path does not support lines, polygons, or clustering. See <a href="getting-started.html#planning-a-large-job">Planning a large job</a> for memory and temporary disk settings.</p>
+<p>For clusters with category counts, see <a href="point-clustering.html">Point clustering</a>. For hexagon-only output, category shares, and tie handling, see <a href="h3-hexagonal-binning.html#hex-only-and-categorical-maps">Hexagonal binning with H3</a>.</p>
 </section><section class="level3"><h3 id="performance-note">Performance note<a class="anchor" aria-label="anchor" href="#performance-note"></a>
 </h3>
 <p><code>freestile(gdf, ...)</code> is the most convenient Python entry point, but it does more preprocessing in GeoPandas before Rust starts tiling. For large datasets, <code><a href="../reference/freestile_file.html">freestile_file()</a></code> and <code><a href="../reference/freestile_query.html">freestile_query()</a></code> are usually the faster path.</p>
@@ -133,7 +151,7 @@
 </h3>
 <p>I’d recommend creating tiles with <code>tile_format="mvt"</code> for Python-facing work for now. Python viewer stacks are still catching up on MLT support, and MVT works everywhere.</p>
 <p>One important caveat: Python’s built-in <code>http.server</code> does not support byte-range requests, so it won’t work as a PMTiles server. You’ll want to use a real static file server instead:</p>
-<div class="sourceCode" id="cb6"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="ex">npx</span> http-server /path/to/tiles <span class="at">-p</span> 8082 <span class="at">--cors</span> <span class="at">-c-1</span></span></code></pre></div>
+<div class="sourceCode" id="cb8"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ex">npx</span> http-server /path/to/tiles <span class="at">-p</span> 8082 <span class="at">--cors</span> <span class="at">-c-1</span></span></code></pre></div>
 <p>You can view any PMTiles file (MLT or MVT) in the browser with <a href="https://maplibre.org/" class="external-link">MapLibre GL JS</a> 5.17+ and the <a href="https://docs.protomaps.com/pmtiles/" class="external-link">PMTiles protocol</a>. If you’re also an R user, the <a href="https://walker-data.com/mapgl/" class="external-link">mapgl</a> package is the most reliable local viewing path right now.</p>
 <p>My recommendation for Python users: try the Positron IDE, which supports both Python and R simultaneously. You’ll be able to do your tiling in Python then easily move over to R for mapping with the mapgl package. Read the <a href="mapping.html">mapping vignette</a> to learn more.</p>
 </section><section class="level3"><h3 id="r-vs-python-api">R vs Python API<a class="anchor" aria-label="anchor" href="#r-vs-python-api"></a>
@@ -289,7 +307,7 @@
 </div>
 
 <div class="pkgdown-footer-right">
-  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.2.0.</p>
+  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.2.1.</p>
 </div>
 
     </footer>

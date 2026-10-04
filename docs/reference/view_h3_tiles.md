@@ -35,7 +35,11 @@ view_h3_tiles(
 - agg_column:
 
   Character or NULL. Aggregation column to drive the hex color scale. If
-  `NULL`, the first non-`h3_id` numeric field in the metadata is used.
+  `NULL`, categorical archives use `point_count`; otherwise the first
+  requested numeric aggregate is used. Older archives keep their
+  original field-order fallback. This is a numeric quick-look viewer;
+  categorical colors can be styled with
+  [`mapgl::add_fill_layer()`](https://walker-data.com/mapgl/reference/add_fill_layer.html).
 
 - stops:
 

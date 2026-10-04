@@ -28,7 +28,7 @@
 
     <a class="navbar-brand me-2" href="index.html">freestiler</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.2.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -43,6 +43,7 @@
   <ul class="dropdown-menu" aria-labelledby="dropdown-articles">
 <li><a class="dropdown-item" href="articles/getting-started.html">Getting Started</a></li>
     <li><a class="dropdown-item" href="articles/mapping.html">Mapping with mapgl</a></li>
+    <li><a class="dropdown-item" href="articles/point-clustering.html">Point clustering</a></li>
     <li><a class="dropdown-item" href="articles/h3-hexagonal-binning.html">Hexagonal binning with H3</a></li>
     <li><hr class="dropdown-divider"></li>
     <li><a class="dropdown-item" href="articles/maplibre-tiles.html">MapLibre Tiles (MLT)</a></li>
@@ -72,6 +73,12 @@
 <!-- badges: end -->
 <p><strong>freestiler</strong> creates <a href="https://github.com/protomaps/PMTiles" class="external-link">PMTiles</a> vector tilesets from R and Python. Give it an sf object, a file on disk, or a DuckDB SQL query, and it writes a single <code>.pmtiles</code> file you can serve from anywhere. The tiling engine is written in Rust and runs in-process, so there’s nothing else to install.</p>
 <div class="section level2">
+<h2 id="new-in-030">New in 0.3.0<a class="anchor" aria-label="anchor" href="#new-in-030"></a>
+</h2>
+<p>Build clusters with category counts, create hexagon-only maps with category shares, and stream large point datasets from DuckDB. This release also reduces memory use when writing tiles and fixes date, CRS, and line-encoding issues. See the <a href="https://walker-data.com/freestiler/news/index.html">changelog</a> for details.</p>
+<p>Explore the <a href="https://walker-data.com/maps/census-2020/race.html" class="external-link">2020 Census race and ethnicity map</a> and <a href="https://walker-data.com/maps/census-2020/age.html" class="external-link">age map</a> to see dots, categorical hexagons, and donut clusters together.</p>
+</div>
+<div class="section level2">
 <h2 id="installation">Installation<a class="anchor" aria-label="anchor" href="#installation"></a>
 </h2>
 <div class="section level3">
@@ -80,7 +87,7 @@
 <p>freestiler is available on CRAN:</p>
 <div class="sourceCode" id="cb1"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/utils/install.packages.html" class="external-link">install.packages</a></span><span class="op">(</span><span class="st">"freestiler"</span><span class="op">)</span></span></code></pre></div>
-<p>For the full feature set powered by Rust DuckDB (MacOS and Linux only), install from <a href="https://walkerke.r-universe.dev" class="external-link">r-universe</a>:</p>
+<p>For GeoParquet input and categorical file clustering, install from <a href="https://walkerke.r-universe.dev" class="external-link">R-Universe</a>. This build also provides Rust DuckDB and streaming on macOS and Linux. On Windows, use the R <code>duckdb</code> backend for non-streaming queries. Restart R before replacing an existing installation:</p>
 <div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/utils/install.packages.html" class="external-link">install.packages</a></span><span class="op">(</span></span>
 <span>  <span class="st">"freestiler"</span>,</span>
@@ -97,6 +104,7 @@
 <div class="sourceCode" id="cb4"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a><span class="ex">pip</span> install freestiler</span></code></pre></div>
 <p>Published PyPI wheels currently target Python 3.9 through 3.14.</p>
 <p>See the <a href="https://walker-data.com/freestiler/articles/python.html">Python Setup</a> article for more details.</p>
+<p>The <a href="https://walker-data.com/freestiler/articles/getting-started.html#installation">installation guide</a> explains which features each build includes. PyPI wheels include native GeoParquet and DuckDB support.</p>
 </div>
 </div>
 <div class="section level2">
@@ -208,11 +216,25 @@
 <span></span>
 <span><span class="fu"><a href="reference/view_h3_tiles.html">view_h3_tiles</a></span><span class="op">(</span><span class="st">"wind.pmtiles"</span>, agg_column <span class="op">=</span> <span class="st">"n"</span><span class="op">)</span></span></code></pre></div>
 <p>Pass <code>fade = TRUE</code> to cross-fade between resolutions instead of swapping cleanly. Requires DuckDB and its <a href="https://duckdb.org/community_extensions/extensions/h3" class="external-link">H3 community extension</a>; see the <a href="https://walker-data.com/freestiler/articles/h3-hexagonal-binning.html">Hexagonal binning with H3</a> article.</p>
+<p>For hexagons at every zoom, set <code>include_points = FALSE</code> and leave <code>base_zoom</code> unset. Add <code>category</code> and <code>category_values</code> to retain category counts, the most common category, its share, and ties.</p>
+</div>
+<div class="section level2">
+<h2 id="categorical-point-clusters">Categorical point clusters<a class="anchor" aria-label="anchor" href="#categorical-point-clusters"></a>
+</h2>
+<p><code><a href="reference/freestile_file.html">freestile_file()</a></code> can count categories within each cluster, so a map can show the mix of groups as well as the total:</p>
+<div class="sourceCode" id="cb13"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="fu"><a href="reference/freestile_file.html">freestile_file</a></span><span class="op">(</span></span>
+<span>  <span class="st">"places.parquet"</span>, <span class="st">"place_clusters.pmtiles"</span>,</span>
+<span>  layer_name <span class="op">=</span> <span class="st">"places"</span>, min_zoom <span class="op">=</span> <span class="fl">0</span>, max_zoom <span class="op">=</span> <span class="fl">10</span>,</span>
+<span>  cluster_distance <span class="op">=</span> <span class="fl">60</span>, cluster_maxzoom <span class="op">=</span> <span class="fl">10</span>,</span>
+<span>  category <span class="op">=</span> <span class="st">"kind"</span>, category_values <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"park"</span>, <span class="st">"museum"</span>, <span class="st">"library"</span><span class="op">)</span></span>
+<span><span class="op">)</span></span></code></pre></div>
+<p>This requires POINT GeoParquet input and the R-Universe build (or the Python package). See <a href="https://walker-data.com/freestiler/articles/point-clustering.html">Point clustering</a> for the output properties, Python example, and current limits.</p>
 </div>
 <div class="section level2">
 <h2 id="multi-layer-tilesets">Multi-layer tilesets<a class="anchor" aria-label="anchor" href="#multi-layer-tilesets"></a>
 </h2>
-<div class="sourceCode" id="cb13"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb14"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">pts</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://r-spatial.github.io/sf/reference/geos_unary.html" class="external-link">st_centroid</a></span><span class="op">(</span><span class="va">nc</span><span class="op">)</span></span>
 <span></span>
 <span><span class="fu"><a href="reference/freestile.html">freestile</a></span><span class="op">(</span></span>
@@ -236,6 +258,10 @@
 <a href="https://walker-data.com/freestiler/articles/getting-started.html">Getting Started</a> - full tutorial</li>
 <li>
 <a href="https://walker-data.com/freestiler/articles/mapping.html">Mapping with mapgl</a> - viewing and styling tiles with mapgl</li>
+<li>
+<a href="https://walker-data.com/freestiler/articles/point-clustering.html">Point clustering</a> - clusters with category counts</li>
+<li>
+<a href="https://walker-data.com/freestiler/articles/h3-hexagonal-binning.html">Hexagonal binning with H3</a> - counts, summaries, and categorical hexagons</li>
 <li>
 <a href="https://walker-data.com/freestiler/articles/maplibre-tiles.html">MapLibre Tiles (MLT)</a> - MLT vs MVT and when to use each</li>
 <li>
@@ -272,6 +298,7 @@
 <h2 data-toc-skip>Developers</h2>
 <ul class="list-unstyled">
 <li>Kyle Walker <br><small class="roles"> Author, maintainer </small>   </li>
+<li><a href="authors.html">More about authors...</a></li>
 </ul>
 </div>
 
@@ -286,7 +313,7 @@
 </div>
 
 <div class="pkgdown-footer-right">
-  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.2.0.</p>
+  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.2.1.</p>
 </div>
 
     </footer>

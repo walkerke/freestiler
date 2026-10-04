@@ -15,7 +15,7 @@ with fade = FALSE (disjoint zoom windows, clean breaks) or fade = TRUE
 
     <a class="navbar-brand me-2" href="../index.html">freestiler</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.2.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -28,6 +28,7 @@ with fade = FALSE (disjoint zoom windows, clean breaks) or fade = TRUE
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-articles" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Articles</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-articles"><li><a class="dropdown-item" href="../articles/getting-started.html">Getting Started</a></li>
     <li><a class="dropdown-item" href="../articles/mapping.html">Mapping with mapgl</a></li>
+    <li><a class="dropdown-item" href="../articles/point-clustering.html">Point clustering</a></li>
     <li><a class="dropdown-item" href="../articles/h3-hexagonal-binning.html">Hexagonal binning with H3</a></li>
     <li><hr class="dropdown-divider"></li>
     <li><a class="dropdown-item" href="../articles/maplibre-tiles.html">MapLibre Tiles (MLT)</a></li>
@@ -83,8 +84,10 @@ with <code>fade = FALSE</code> (disjoint zoom windows, clean breaks) or <code>fa
 
 <dt id="arg-agg-column">agg_column<a class="anchor" aria-label="anchor" href="#arg-agg-column"></a></dt>
 <dd><p>Character or NULL. Aggregation column to drive the hex
-color scale. If <code>NULL</code>, the first non-<code>h3_id</code> numeric field in the
-metadata is used.</p></dd>
+color scale. If <code>NULL</code>, categorical archives use <code>point_count</code>; otherwise
+the first requested numeric aggregate is used. Older archives keep their
+original field-order fallback. This is a numeric quick-look viewer;
+categorical colors can be styled with <code><a href="https://walker-data.com/mapgl/reference/add_fill_layer.html" class="external-link">mapgl::add_fill_layer()</a></code>.</p></dd>
 
 
 <dt id="arg-stops">stops<a class="anchor" aria-label="anchor" href="#arg-stops"></a></dt>
@@ -156,13 +159,12 @@ roadmap.</p>
 
     <div class="section level2">
     <h2 id="ref-examples">Examples<a class="anchor" aria-label="anchor" href="#ref-examples"></a></h2>
-    <div class="sourceCode"><pre class="sourceCode r"><code><span class="r-in"><span><span class="kw">if</span> <span class="op">(</span><span class="cn">FALSE</span><span class="op">)</span> <span class="op">{</span> <span class="co"># \dontrun{</span></span></span>
-<span class="r-in"><span><span class="fu">view_h3_tiles</span><span class="op">(</span><span class="st">"wind.pmtiles"</span>, agg_column <span class="op">=</span> <span class="st">"n"</span>,</span></span>
-<span class="r-in"><span>  stops <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>values <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">1</span>, <span class="fl">10</span>, <span class="fl">100</span>, <span class="fl">1000</span>, <span class="fl">10000</span><span class="op">)</span>,</span></span>
-<span class="r-in"><span>               colors <span class="op">=</span> <span class="fu">viridisLite</span><span class="fu">::</span><span class="fu"><a href="https://sjmgarnier.github.io/viridisLite/reference/viridis.html" class="external-link">viridis</a></span><span class="op">(</span><span class="fl">5</span><span class="op">)</span><span class="op">)</span><span class="op">)</span></span></span>
-<span class="r-in"><span><span class="op">}</span> <span class="co"># }</span></span></span>
-<span class="r-in"><span></span></span>
-</code></pre></div>
+    <div class="sourceCode"><pre class="sourceCode r"><code><span><span class="kw">if</span> <span class="op">(</span><span class="cn">FALSE</span><span class="op">)</span> <span class="op">{</span> <span class="co"># \dontrun{</span></span>
+<span><span class="fu">view_h3_tiles</span><span class="op">(</span><span class="st">"wind.pmtiles"</span>, agg_column <span class="op">=</span> <span class="st">"n"</span>,</span>
+<span>  stops <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span>values <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">1</span>, <span class="fl">10</span>, <span class="fl">100</span>, <span class="fl">1000</span>, <span class="fl">10000</span><span class="op">)</span>,</span>
+<span>               colors <span class="op">=</span> <span class="fu">viridisLite</span><span class="fu">::</span><span class="fu"><a href="https://sjmgarnier.github.io/viridisLite/reference/viridis.html" class="external-link">viridis</a></span><span class="op">(</span><span class="fl">5</span><span class="op">)</span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="op">}</span> <span class="co"># }</span></span>
+<span></span></code></pre></div>
     </div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>
     </nav></aside></div>
@@ -173,7 +175,7 @@ roadmap.</p>
 </div>
 
 <div class="pkgdown-footer-right">
-  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.2.0.</p>
+  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.2.1.</p>
 </div>
 
     </footer></div>

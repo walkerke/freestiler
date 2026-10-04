@@ -28,7 +28,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">freestiler</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.2.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -43,6 +43,7 @@
   <ul class="dropdown-menu" aria-labelledby="dropdown-articles">
 <li><a class="dropdown-item" href="../articles/getting-started.html">Getting Started</a></li>
     <li><a class="dropdown-item" href="../articles/mapping.html">Mapping with mapgl</a></li>
+    <li><a class="dropdown-item" href="../articles/point-clustering.html">Point clustering</a></li>
     <li><a class="dropdown-item" href="../articles/h3-hexagonal-binning.html">Hexagonal binning with H3</a></li>
     <li><hr class="dropdown-divider"></li>
     <li><a class="dropdown-item" href="../articles/maplibre-tiles.html">MapLibre Tiles (MLT)</a></li>
@@ -83,6 +84,7 @@
 <section class="level3"><h3 id="requirements">Requirements<a class="anchor" aria-label="anchor" href="#requirements"></a>
 </h3>
 <p><code><a href="../reference/freestile_h3.html">freestile_h3()</a></code> uses DuckDB and its <a href="https://duckdb.org/community_extensions/extensions/h3" class="external-link">H3 community extension</a> to do the binning. On the first call, DuckDB downloads the extension automatically (<code>INSTALL h3 FROM community</code>), so you need network access that first time.</p>
+<p>H3 binning works with the CRAN build of freestiler. It uses the R or Python DuckDB package, independently of the optional native Rust DuckDB backend.</p>
 <p>In R, install the <code>DBI</code> and <code>duckdb</code> packages (and <code>mapgl</code> for viewing):</p>
 <div class="sourceCode" id="cb1"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/utils/install.packages.html" class="external-link">install.packages</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"DBI"</span>, <span class="st">"duckdb"</span>, <span class="st">"mapgl"</span><span class="op">)</span><span class="op">)</span></span></code></pre></div>
@@ -127,16 +129,34 @@
 <span id="cb4-14"><a href="#cb4-14" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb4-15"><a href="#cb4-15" aria-hidden="true" tabindex="-1"></a>freestile_h3(turbines, <span class="st">"turbines.pmtiles"</span>, min_zoom<span class="op">=</span><span class="dv">2</span>, max_zoom<span class="op">=</span><span class="dv">12</span>, base_zoom<span class="op">=</span><span class="dv">10</span>)</span></code></pre></div>
 <p><code><a href="../reference/freestile_h3.html">freestile_h3()</a></code> writes one <a href="#layer-naming">MVT source-layer per H3 resolution</a> (<code>h3_r02</code>, <code>h3_r03</code>, and so on) plus a <code>points</code> source-layer for the raw data. With the default <code>fade = FALSE</code>, those layers have <strong>disjoint zoom windows</strong>, so the map swaps hexagon resolutions cleanly as you zoom and replaces hexagons with individual turbines at <code>base_zoom</code>.</p>
+</section><section class="level3"><h3 id="hex-only-and-categorical-maps">Hex-only and categorical maps<a class="anchor" aria-label="anchor" href="#hex-only-and-categorical-maps"></a>
+</h3>
+<p>If the close-up dots already have their own archive, set <code>include_points = FALSE</code>. Hex layers then cover the entire <code>min_zoom:max_zoom</code> range and no raw-point frame is fetched. Leave <code>base_zoom</code> unset. For SQL input this avoids materializing the raw points in R or Python, but <strong>all occupied hex geometries are still held in memory</strong> for tiling; it is not a bounded polygon-output path.</p>
+<p>The <a href="https://walker-data.com/maps/census-2020/race.html" class="external-link">Census race and ethnicity map</a> and <a href="https://walker-data.com/maps/census-2020/age.html" class="external-link">age map</a> use this approach. Switch to their hexagon views to see the most common group in each cell, then click a hexagon to see all category shares.</p>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb5"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="va">query</span> <span class="op">&lt;-</span> <span class="st">"SELECT ST_Point(lon, lat) AS geom, group_id FROM read_parquet('dots/*.parquet')"</span></span>
+<span><span class="fu"><a href="../reference/freestile_h3.html">freestile_h3</a></span><span class="op">(</span><span class="va">query</span>, <span class="st">"groups.pmtiles"</span>,</span>
+<span>  include_points <span class="op">=</span> <span class="cn">FALSE</span>, category <span class="op">=</span> <span class="st">"group_id"</span>, category_values <span class="op">=</span> <span class="fl">1</span><span class="op">:</span><span class="fl">8</span>,</span>
+<span>  source_crs <span class="op">=</span> <span class="st">"EPSG:4326"</span>, min_zoom <span class="op">=</span> <span class="fl">3</span>, max_zoom <span class="op">=</span> <span class="fl">11</span>,</span>
+<span>  h3_resolutions <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">4</span>, <span class="fl">4</span>, <span class="fl">5</span>, <span class="fl">5</span>, <span class="fl">6</span>, <span class="fl">6</span>, <span class="fl">7</span>, <span class="fl">7</span>, <span class="fl">8</span><span class="op">)</span>, fade <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span></span></code></pre></div>
+</div>
+<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>freestile_h3(query, <span class="st">"groups.pmtiles"</span>,</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>             include_points<span class="op">=</span><span class="va">False</span>, category<span class="op">=</span><span class="st">"group_id"</span>, category_values<span class="op">=</span><span class="bu">list</span>(<span class="bu">range</span>(<span class="dv">1</span>, <span class="dv">9</span>)),</span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>             source_crs<span class="op">=</span><span class="st">"EPSG:4326"</span>, min_zoom<span class="op">=</span><span class="dv">3</span>, max_zoom<span class="op">=</span><span class="dv">11</span>,</span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a>             h3_resolutions<span class="op">=</span>[<span class="dv">4</span>, <span class="dv">4</span>, <span class="dv">5</span>, <span class="dv">5</span>, <span class="dv">6</span>, <span class="dv">6</span>, <span class="dv">7</span>, <span class="dv">7</span>, <span class="dv">8</span>], fade<span class="op">=</span><span class="va">True</span>)</span></code></pre></div>
+<p>Each hex carries <code>point_count</code>, <code>group_id:1</code> through <code>group_id:8</code>, and <code>group_id:_other</code> for null or unlisted categories. These count input records, not weights. The additional <code>modal_category</code> is a string (<code>"1"</code>, not numeric 1), with <code>modal_count</code>, <code>modal_share</code>, and boolean <code>modal_tie</code>. A tie has no selected category; <code>_other</code> participates in the mode. The declared dictionary keeps zero-count categories present; omit it to infer up to 64 categories.</p>
+<p>Style <code>modal_category</code> with a categorical <code>mapgl</code> expression, and render ties with a neutral color. The numeric quick-look <code><a href="../reference/view_h3_tiles.html">view_h3_tiles()</a></code> uses <code>point_count</code> by default, not the category with the alphabetically first field name. Integer aggregates are transported exactly up to <code>2^53 - 1</code>; values beyond that range are rejected rather than silently rounded. For dot-density inputs, fine-cell modes describe the generated point realization, not observed individual locations.</p>
 </section><section class="level3"><h3 id="choosing-aggregations">Choosing aggregations<a class="anchor" aria-label="anchor" href="#choosing-aggregations"></a>
 </h3>
 <p>The <code>agg</code> argument controls what summary properties each hexagon carries. The simplest case counts the points in each hex; <code>agg = "count"</code> is the default.</p>
 <div class="cell">
-<div class="sourceCode cell-code" id="cb5"><pre class="downlit sourceCode r">
+<div class="sourceCode cell-code" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="../reference/freestile_h3.html">freestile_h3</a></span><span class="op">(</span><span class="va">turbines</span>, <span class="st">"turbines.pmtiles"</span>, agg <span class="op">=</span> <span class="st">"count"</span><span class="op">)</span></span></code></pre></div>
 </div>
 <p>For richer summaries, pass a named vector of SQL aggregations:</p>
 <div class="cell">
-<div class="sourceCode cell-code" id="cb6"><pre class="downlit sourceCode r">
+<div class="sourceCode cell-code" id="cb8"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="../reference/freestile_h3.html">freestile_h3</a></span><span class="op">(</span></span>
 <span>  <span class="va">turbines</span>, <span class="st">"turbines.pmtiles"</span>,</span>
 <span>  agg <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span></span>
@@ -148,7 +168,7 @@
 </div>
 <p>That gives each hexagon a turbine count (<code>n</code>), the total installed capacity in megawatts (<code>total_mw</code>), and the average turbine size (<code>avg_mw</code>), which has climbed steadily as turbine technology has grown. If you’d rather not write SQL, pass a named list of <code>c(fn, column)</code> pairs instead:</p>
 <div class="cell">
-<div class="sourceCode cell-code" id="cb7"><pre class="downlit sourceCode r">
+<div class="sourceCode cell-code" id="cb9"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="../reference/freestile_h3.html">freestile_h3</a></span><span class="op">(</span></span>
 <span>  <span class="va">turbines</span>, <span class="st">"turbines.pmtiles"</span>,</span>
 <span>  agg <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span></span>
@@ -160,20 +180,20 @@
 </div>
 <p>Supported function names: <code>count</code>, <code>sum</code>, <code>mean</code> (alias <code>avg</code>), <code>min</code>, <code>max</code>, <code>median</code>.</p>
 <p>In Python, <code>agg</code> is a dictionary. Map names to SQL strings, or to <code>(fn, column)</code> tuples:</p>
-<div class="sourceCode" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>freestile_h3(</span>
-<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>    turbines, <span class="st">"turbines.pmtiles"</span>,</span>
-<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>    agg<span class="op">=</span>{<span class="st">"n"</span>: <span class="st">"COUNT(*)"</span>, <span class="st">"total_mw"</span>: <span class="st">"SUM(capacity_mw)"</span>},</span>
-<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a>)</span>
-<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a>freestile_h3(</span>
-<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a>    turbines, <span class="st">"turbines.pmtiles"</span>,</span>
-<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a>    agg<span class="op">=</span>{<span class="st">"n"</span>: (<span class="st">"count"</span>, <span class="st">"*"</span>), <span class="st">"total_mw"</span>: (<span class="st">"sum"</span>, <span class="st">"capacity_mw"</span>)},</span>
-<span id="cb8-9"><a href="#cb8-9" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<div class="sourceCode" id="cb10"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>freestile_h3(</span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>    turbines, <span class="st">"turbines.pmtiles"</span>,</span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>    agg<span class="op">=</span>{<span class="st">"n"</span>: <span class="st">"COUNT(*)"</span>, <span class="st">"total_mw"</span>: <span class="st">"SUM(capacity_mw)"</span>},</span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a>freestile_h3(</span>
+<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a>    turbines, <span class="st">"turbines.pmtiles"</span>,</span>
+<span id="cb10-8"><a href="#cb10-8" aria-hidden="true" tabindex="-1"></a>    agg<span class="op">=</span>{<span class="st">"n"</span>: (<span class="st">"count"</span>, <span class="st">"*"</span>), <span class="st">"total_mw"</span>: (<span class="st">"sum"</span>, <span class="st">"capacity_mw"</span>)},</span>
+<span id="cb10-9"><a href="#cb10-9" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
 </section><section class="level3"><h3 id="viewing">Viewing<a class="anchor" aria-label="anchor" href="#viewing"></a>
 </h3>
 <p><code><a href="../reference/view_h3_tiles.html">view_h3_tiles()</a></code> reads the archive metadata, finds the <code>h3_r*</code> layers and the points layer, and builds a <code>mapgl</code> map with one shared color scale across the hex resolutions. It accepts a quick-look default ramp for a first pass; for a finished map, pass explicit <code>stops</code>:</p>
 <div class="cell">
-<div class="sourceCode cell-code" id="cb9"><pre class="downlit sourceCode r">
+<div class="sourceCode cell-code" id="cb11"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="../reference/view_h3_tiles.html">view_h3_tiles</a></span><span class="op">(</span></span>
 <span>  <span class="st">"turbines.pmtiles"</span>,</span>
 <span>  agg_column <span class="op">=</span> <span class="st">"n"</span>,</span>
@@ -190,7 +210,7 @@
 </h3>
 <p>If your points already live in DuckDB, or in a file it can read (Parquet, CSV, GeoPackage, or Shapefile), skip the in-memory roundtrip and pass SQL directly. Save the turbine coordinates to a file once, then let DuckDB build the geometry and the capacity column from its columns:</p>
 <div class="cell">
-<div class="sourceCode cell-code" id="cb10"><pre class="downlit sourceCode r">
+<div class="sourceCode cell-code" id="cb12"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/utils/write.table.html" class="external-link">write.csv</a></span><span class="op">(</span></span>
 <span>  <span class="fu">jsonlite</span><span class="fu">::</span><span class="fu"><a href="https://jeroen.r-universe.dev/jsonlite/reference/fromJSON.html" class="external-link">fromJSON</a></span><span class="op">(</span></span>
 <span>    <span class="st">"https://energy.usgs.gov/api/uswtdb/v1/turbines?select=xlong,ylat,t_cap"</span></span>
@@ -207,22 +227,22 @@
 <span><span class="op">)</span></span></code></pre></div>
 </div>
 <p>The Python call is the same, with a dictionary for <code>agg</code>:</p>
-<div class="sourceCode" id="cb11"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pandas <span class="im">as</span> pd</span>
-<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>pd.read_json(</span>
-<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">"https://energy.usgs.gov/api/uswtdb/v1/turbines?select=xlong,ylat,t_cap"</span></span>
-<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a>).to_csv(<span class="st">"turbines.csv"</span>, index<span class="op">=</span><span class="va">False</span>)</span>
-<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a>freestile_h3(</span>
-<span id="cb11-8"><a href="#cb11-8" aria-hidden="true" tabindex="-1"></a>    <span class="st">"""SELECT ST_Point(xlong, ylat) AS geometry, t_cap / 1000 AS capacity_mw</span></span>
-<span id="cb11-9"><a href="#cb11-9" aria-hidden="true" tabindex="-1"></a><span class="st">         FROM read_csv_auto('turbines.csv')"""</span>,</span>
-<span id="cb11-10"><a href="#cb11-10" aria-hidden="true" tabindex="-1"></a>    <span class="st">"turbines.pmtiles"</span>,</span>
-<span id="cb11-11"><a href="#cb11-11" aria-hidden="true" tabindex="-1"></a>    agg<span class="op">=</span>{<span class="st">"n"</span>: <span class="st">"COUNT(*)"</span>, <span class="st">"total_mw"</span>: <span class="st">"SUM(capacity_mw)"</span>},</span>
-<span id="cb11-12"><a href="#cb11-12" aria-hidden="true" tabindex="-1"></a>    source_crs<span class="op">=</span><span class="st">"EPSG:4326"</span>,</span>
-<span id="cb11-13"><a href="#cb11-13" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<div class="sourceCode" id="cb13"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pandas <span class="im">as</span> pd</span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>pd.read_json(</span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">"https://energy.usgs.gov/api/uswtdb/v1/turbines?select=xlong,ylat,t_cap"</span></span>
+<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a>).to_csv(<span class="st">"turbines.csv"</span>, index<span class="op">=</span><span class="va">False</span>)</span>
+<span id="cb13-6"><a href="#cb13-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a>freestile_h3(</span>
+<span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a>    <span class="st">"""SELECT ST_Point(xlong, ylat) AS geometry, t_cap / 1000 AS capacity_mw</span></span>
+<span id="cb13-9"><a href="#cb13-9" aria-hidden="true" tabindex="-1"></a><span class="st">         FROM read_csv_auto('turbines.csv')"""</span>,</span>
+<span id="cb13-10"><a href="#cb13-10" aria-hidden="true" tabindex="-1"></a>    <span class="st">"turbines.pmtiles"</span>,</span>
+<span id="cb13-11"><a href="#cb13-11" aria-hidden="true" tabindex="-1"></a>    agg<span class="op">=</span>{<span class="st">"n"</span>: <span class="st">"COUNT(*)"</span>, <span class="st">"total_mw"</span>: <span class="st">"SUM(capacity_mw)"</span>},</span>
+<span id="cb13-12"><a href="#cb13-12" aria-hidden="true" tabindex="-1"></a>    source_crs<span class="op">=</span><span class="st">"EPSG:4326"</span>,</span>
+<span id="cb13-13"><a href="#cb13-13" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
 <p><code>read_csv_auto()</code> and <code>read_parquet()</code> are built into DuckDB, so they work the same from R and Python. (Reading remote files over HTTP needs DuckDB’s <code>httpfs</code> and <code>json</code> extensions, which the R <code>duckdb</code> package does not always bundle, so download to a local file first.) Multi-statement SQL works too: setup statements (<code>CREATE VIEW</code>, <code>LOAD</code>, and so on) run first, and the final <code>SELECT</code> is the input. Here we keep only the utility-scale turbines over 2 MW:</p>
 <div class="cell">
-<div class="sourceCode cell-code" id="cb12"><pre class="downlit sourceCode r">
+<div class="sourceCode cell-code" id="cb14"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="../reference/freestile_h3.html">freestile_h3</a></span><span class="op">(</span></span>
 <span>  <span class="fu"><a href="https://rdrr.io/r/base/paste.html" class="external-link">paste</a></span><span class="op">(</span></span>
 <span>    <span class="st">"CREATE TEMP VIEW big AS"</span>,</span>
@@ -238,7 +258,7 @@
 </h3>
 <p>By default, hexagon resolutions swap cleanly at zoom boundaries. To blend the transitions instead, so coarser hexes fade out as finer ones fade in, set <code>fade = TRUE</code>:</p>
 <div class="cell">
-<div class="sourceCode cell-code" id="cb13"><pre class="downlit sourceCode r">
+<div class="sourceCode cell-code" id="cb15"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="../reference/freestile_h3.html">freestile_h3</a></span><span class="op">(</span></span>
 <span>  <span class="va">turbines</span>, <span class="st">"turbines_fade.pmtiles"</span>,</span>
 <span>  agg <span class="op">=</span> <span class="st">"count"</span>,</span>
@@ -253,7 +273,7 @@
 </h3>
 <p>Each MVT source-layer is named <code>"&lt;hex_layer_prefix&gt;_r&lt;resolution&gt;"</code>. The default prefix is <code>"h3"</code>, so you’ll see layer ids like <code>h3_r02</code>, <code>h3_r03</code>, up through <code>h3_r07</code>. The raw-points layer defaults to <code>"points"</code>. You can change either:</p>
 <div class="cell">
-<div class="sourceCode cell-code" id="cb14"><pre class="downlit sourceCode r">
+<div class="sourceCode cell-code" id="cb16"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="../reference/freestile_h3.html">freestile_h3</a></span><span class="op">(</span></span>
 <span>  <span class="va">turbines</span>, <span class="st">"turbines.pmtiles"</span>,</span>
 <span>  hex_layer_prefix <span class="op">=</span> <span class="st">"wind"</span>,   <span class="co"># produces "wind_r02", "wind_r03", ...</span></span>
@@ -264,7 +284,7 @@
 </h3>
 <p>The defaults pair each tile zoom with an H3 resolution whose hexagon edge length roughly matches a tile pixel at that zoom. Override the mapping with <code>h3_resolutions</code>:</p>
 <div class="cell">
-<div class="sourceCode cell-code" id="cb15"><pre class="downlit sourceCode r">
+<div class="sourceCode cell-code" id="cb17"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="co"># res 4 at zoom 0-3, res 6 at zoom 4-6, then points at 7+</span></span>
 <span><span class="fu"><a href="../reference/freestile_h3.html">freestile_h3</a></span><span class="op">(</span></span>
 <span>  <span class="va">turbines</span>, <span class="st">"turbines.pmtiles"</span>,</span>
@@ -285,7 +305,7 @@
 <p><code><a href="../reference/view_h3_tiles.html">view_h3_tiles()</a></code> is a quick preview. For a map you’d actually ship, build it directly with <a href="https://walker-data.com/mapgl/" class="external-link">mapgl</a>, which gives you full control over the color scale, the fade envelope, and the tooltips. The pattern is to read the layer list from the archive metadata, add one fill layer per H3 resolution, and add a circle layer for the points.</p>
 <p>First build a fade archive that carries the columns you want to show:</p>
 <div class="cell">
-<div class="sourceCode cell-code" id="cb16"><pre class="downlit sourceCode r">
+<div class="sourceCode cell-code" id="cb18"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="../reference/freestile_h3.html">freestile_h3</a></span><span class="op">(</span></span>
 <span>  <span class="va">turbines</span>, <span class="st">"turbines_fade.pmtiles"</span>,</span>
 <span>  agg <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span>n <span class="op">=</span> <span class="st">"COUNT(*)"</span>, total_mw <span class="op">=</span> <span class="st">"SUM(capacity_mw)"</span><span class="op">)</span>,</span>
@@ -295,7 +315,7 @@
 </div>
 <p>Then style it. The metadata lists every layer in the archive, so pull out the hex layers with <code><a href="https://purrr.tidyverse.org/reference/keep.html" class="external-link">purrr::keep()</a></code>, sort them coarse to fine, and fold a fill layer onto the map for each one with <code><a href="https://purrr.tidyverse.org/reference/reduce.html" class="external-link">purrr::reduce()</a></code>. Every hex layer shares one color scale and gets a zoom-keyed <code>fill_opacity</code> envelope that fades it in and back out across its window, so overlapping resolutions cross-fade:</p>
 <div class="cell">
-<div class="sourceCode cell-code" id="cb17"><pre class="downlit sourceCode r">
+<div class="sourceCode cell-code" id="cb19"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://walker-data.com/mapgl/" class="external-link">mapgl</a></span><span class="op">)</span></span>
 <span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://purrr.tidyverse.org/" class="external-link">purrr</a></span><span class="op">)</span></span>
 <span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://stringr.tidyverse.org" class="external-link">stringr</a></span><span class="op">)</span></span>
@@ -466,7 +486,7 @@
 </div>
 
 <div class="pkgdown-footer-right">
-  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.2.0.</p>
+  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.2.1.</p>
 </div>
 
     </footer>

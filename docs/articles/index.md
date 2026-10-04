@@ -14,6 +14,8 @@
 
 - [Dynamic hexagonal binning with
   H3](https://walker-data.com/freestiler/articles/h3-hexagonal-binning.md):
+- [Point
+  clustering](https://walker-data.com/freestiler/articles/point-clustering.md):
 
 ### Technical Details
 

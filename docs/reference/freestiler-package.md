@@ -18,3 +18,13 @@ Useful links:
 ## Author
 
 **Maintainer**: Kyle Walker <kyle@walker-data.com>
+
+Authors:
+
+- Kyle Walker <kyle@walker-data.com>
+
+Other contributors:
+
+- Mapbox (Supercluster code (ISC)) \[copyright holder\]
+
+- Vladimir Agafonkin (KDBush code (ISC)) \[copyright holder\]

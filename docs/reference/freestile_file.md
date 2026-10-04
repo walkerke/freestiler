@@ -22,7 +22,10 @@ freestile_file(
   simplification = TRUE,
   overwrite = TRUE,
   quiet = FALSE,
-  engine = "geoparquet"
+  engine = "geoparquet",
+  category = NULL,
+  category_values = NULL,
+  cluster_min_points = 2L
 )
 ```
 
@@ -93,17 +96,49 @@ freestile_file(
   Character. Backend engine: `"geoparquet"` (default, for GeoParquet
   files) or `"duckdb"` (for any file format DuckDB supports).
 
+- category:
+
+  Character or NULL. For the ordered categorical clustering increment,
+  the attribute whose counts are carried into each cluster.
+
+- category_values:
+
+  Character or numeric vector. An explicit dictionary of 1–64 strings or
+  JS-safe integers. Missing/unlisted values count as `category:_other`;
+  singleton attributes are preserved.
+
+- cluster_min_points:
+
+  Integer. Minimum population to form a cluster (default 2), used by the
+  categorical clustering increment.
+
 ## Value
 
 The output file path (invisibly).
 
 ## Details
 
-The GeoParquet engine requires compilation with
-`FREESTILER_GEOPARQUET=true`. The DuckDB engine uses the Rust DuckDB
-backend when included in the build (enabled by default for native
-builds), or falls back to the R `duckdb` package. Control backend
-selection with `options(freestiler.duckdb_backend = "auto"|"rust"|"r")`.
+The GeoParquet engine and categorical file clustering require GeoParquet
+support, available in the R-Universe build:
+`install.packages("freestiler", repos = c("https://walkerke.r-universe.dev", "https://cloud.r-project.org"))`.
+Restart R before reinstalling. Rust DuckDB and streaming are available
+on macOS and Linux; Windows uses the R `duckdb` backend for
+non-streaming queries. The DuckDB engine uses the Rust DuckDB backend
+when included in the build (enabled by default for native builds), or
+falls back to the R `duckdb` package. Control backend selection with
+`options(freestiler.duckdb_backend = "auto"|"rust"|"r")`.
+
+With `category`, the GeoParquet engine uses the pinned Supercluster
+8.0.1 algorithm in physical file order, with `cluster_distance` measured
+in pixels relative to a 512-pixel tile. This initial increment requires
+`cluster_maxzoom = max_zoom`, `base_zoom = NULL`,
+`simplification = TRUE`, and no `drop_rate`/`coalesce`; use a separate
+dot source above the clustered zooms. It preserves counts at every
+clustered zoom and writes `cluster_expansion_zoom` for click-to-expand.
+Ordering changes membership. The compact global index remains resident:
+this is not an out-of-core clustering or fixed-RAM guarantee. The
+existing noncategorical clustering path is not yet migrated to this
+algorithm.
 
 ## Examples
 

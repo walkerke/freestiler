@@ -33,9 +33,14 @@ the binning. On the first call, DuckDB downloads the extension
 automatically (`INSTALL h3 FROM community`), so you need network access
 that first time.
 
+H3 binning works with the CRAN build of freestiler. It uses the R or
+Python DuckDB package, independently of the optional native Rust DuckDB
+backend.
+
 In R, install the `DBI` and `duckdb` packages (and `mapgl` for viewing):
 
 ``` r
+
 install.packages(c("DBI", "duckdb", "mapgl"))
 ```
 
@@ -53,6 +58,7 @@ a longitude, a latitude, and the turbine’s nameplate capacity in
 kilowatts.
 
 ``` r
+
 library(freestiler)
 library(sf)
 
@@ -98,6 +104,54 @@ data. With the default `fade = FALSE`, those layers have **disjoint zoom
 windows**, so the map swaps hexagon resolutions cleanly as you zoom and
 replaces hexagons with individual turbines at `base_zoom`.
 
+### Hex-only and categorical maps
+
+If the close-up dots already have their own archive, set
+`include_points = FALSE`. Hex layers then cover the entire
+`min_zoom:max_zoom` range and no raw-point frame is fetched. Leave
+`base_zoom` unset. For SQL input this avoids materializing the raw
+points in R or Python, but **all occupied hex geometries are still held
+in memory** for tiling; it is not a bounded polygon-output path.
+
+The [Census race and ethnicity
+map](https://walker-data.com/maps/census-2020/race.html) and [age
+map](https://walker-data.com/maps/census-2020/age.html) use this
+approach. Switch to their hexagon views to see the most common group in
+each cell, then click a hexagon to see all category shares.
+
+``` r
+
+query <- "SELECT ST_Point(lon, lat) AS geom, group_id FROM read_parquet('dots/*.parquet')"
+freestile_h3(query, "groups.pmtiles",
+  include_points = FALSE, category = "group_id", category_values = 1:8,
+  source_crs = "EPSG:4326", min_zoom = 3, max_zoom = 11,
+  h3_resolutions = c(4, 4, 5, 5, 6, 6, 7, 7, 8), fade = TRUE)
+```
+
+``` python
+freestile_h3(query, "groups.pmtiles",
+             include_points=False, category="group_id", category_values=list(range(1, 9)),
+             source_crs="EPSG:4326", min_zoom=3, max_zoom=11,
+             h3_resolutions=[4, 4, 5, 5, 6, 6, 7, 7, 8], fade=True)
+```
+
+Each hex carries `point_count`, `group_id:1` through `group_id:8`, and
+`group_id:_other` for null or unlisted categories. These count input
+records, not weights. The additional `modal_category` is a string
+(`"1"`, not numeric 1), with `modal_count`, `modal_share`, and boolean
+`modal_tie`. A tie has no selected category; `_other` participates in
+the mode. The declared dictionary keeps zero-count categories present;
+omit it to infer up to 64 categories.
+
+Style `modal_category` with a categorical `mapgl` expression, and render
+ties with a neutral color. The numeric quick-look
+[`view_h3_tiles()`](https://walker-data.com/freestiler/reference/view_h3_tiles.md)
+uses `point_count` by default, not the category with the alphabetically
+first field name. Integer aggregates are transported exactly up to
+`2^53 - 1`; values beyond that range are rejected rather than silently
+rounded. For dot-density inputs, fine-cell modes describe the generated
+point realization, not observed individual locations.
+
 ### Choosing aggregations
 
 The `agg` argument controls what summary properties each hexagon
@@ -105,12 +159,14 @@ carries. The simplest case counts the points in each hex;
 `agg = "count"` is the default.
 
 ``` r
+
 freestile_h3(turbines, "turbines.pmtiles", agg = "count")
 ```
 
 For richer summaries, pass a named vector of SQL aggregations:
 
 ``` r
+
 freestile_h3(
   turbines, "turbines.pmtiles",
   agg = c(
@@ -128,6 +184,7 @@ If you’d rather not write SQL, pass a named list of `c(fn, column)`
 pairs instead:
 
 ``` r
+
 freestile_h3(
   turbines, "turbines.pmtiles",
   agg = list(
@@ -165,6 +222,7 @@ hex resolutions. It accepts a quick-look default ramp for a first pass;
 for a finished map, pass explicit `stops`:
 
 ``` r
+
 view_h3_tiles(
   "turbines.pmtiles",
   agg_column = "n",
@@ -196,6 +254,7 @@ and pass SQL directly. Save the turbine coordinates to a file once, then
 let DuckDB build the geometry and the capacity column from its columns:
 
 ``` r
+
 write.csv(
   jsonlite::fromJSON(
     "https://energy.usgs.gov/api/uswtdb/v1/turbines?select=xlong,ylat,t_cap"
@@ -239,6 +298,7 @@ and so on) run first, and the final `SELECT` is the input. Here we keep
 only the utility-scale turbines over 2 MW:
 
 ``` r
+
 freestile_h3(
   paste(
     "CREATE TEMP VIEW big AS",
@@ -262,6 +322,7 @@ blend the transitions instead, so coarser hexes fade out as finer ones
 fade in, set `fade = TRUE`:
 
 ``` r
+
 freestile_h3(
   turbines, "turbines_fade.pmtiles",
   agg = "count",
@@ -289,6 +350,7 @@ default prefix is `"h3"`, so you’ll see layer ids like `h3_r02`,
 `"points"`. You can change either:
 
 ``` r
+
 freestile_h3(
   turbines, "turbines.pmtiles",
   hex_layer_prefix = "wind",   # produces "wind_r02", "wind_r03", ...
@@ -303,6 +365,7 @@ edge length roughly matches a tile pixel at that zoom. Override the
 mapping with `h3_resolutions`:
 
 ``` r
+
 # res 4 at zoom 0-3, res 6 at zoom 4-6, then points at 7+
 freestile_h3(
   turbines, "turbines.pmtiles",
@@ -336,6 +399,7 @@ fill layer per H3 resolution, and add a circle layer for the points.
 First build a fade archive that carries the columns you want to show:
 
 ``` r
+
 freestile_h3(
   turbines, "turbines_fade.pmtiles",
   agg = c(n = "COUNT(*)", total_mw = "SUM(capacity_mw)"),
@@ -355,6 +419,7 @@ Every hex layer shares one color scale and gets a zoom-keyed
 so overlapping resolutions cross-fade:
 
 ``` r
+
 library(mapgl)
 library(purrr)
 library(stringr)

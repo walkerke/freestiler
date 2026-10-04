@@ -22,6 +22,8 @@ The result behaves like point clustering on a map, but with a fixed hex grid ins
 
 `freestile_h3()` uses DuckDB and its [H3 community extension](https://duckdb.org/community_extensions/extensions/h3) to do the binning. On the first call, DuckDB downloads the extension automatically (`INSTALL h3 FROM community`), so you need network access that first time.
 
+H3 binning works with the CRAN build of freestiler. It uses the R or Python DuckDB package, independently of the optional native Rust DuckDB backend.
+
 In R, install the `DBI` and `duckdb` packages (and `mapgl` for viewing):
 
 ``` r
@@ -87,6 +89,8 @@ Hex layers then cover the entire `min_zoom:max_zoom` range and no raw-point fram
 is fetched. Leave `base_zoom` unset. For SQL input this avoids materializing the
 raw points in R or Python, but **all occupied hex geometries are still held in
 memory** for tiling; it is not a bounded polygon-output path.
+
+The [Census race and ethnicity map](https://walker-data.com/maps/census-2020/race.html) and [age map](https://walker-data.com/maps/census-2020/age.html) use this approach. Switch to their hexagon views to see the most common group in each cell, then click a hexagon to see all category shares.
 
 ```{r}
 #| eval: false

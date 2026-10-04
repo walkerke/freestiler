@@ -27,6 +27,8 @@ navbar:
         href: articles/getting-started.html
       - text: Mapping with mapgl
         href: articles/mapping.html
+      - text: Point clustering
+        href: articles/point-clustering.html
       - text: Hexagonal binning with H3
         href: articles/h3-hexagonal-binning.html
       - text: "---"
@@ -72,6 +74,7 @@ articles:
   navbar: ~
   contents:
   - h3-hexagonal-binning
+  - point-clustering
 
 - title: Technical Details
   navbar: ~

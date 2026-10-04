@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">freestiler</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.2.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.3.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -20,6 +20,7 @@
   <button class="nav-link dropdown-toggle" type="button" id="dropdown-articles" data-bs-toggle="dropdown" aria-expanded="false" aria-haspopup="true">Articles</button>
   <ul class="dropdown-menu" aria-labelledby="dropdown-articles"><li><a class="dropdown-item" href="../articles/getting-started.html">Getting Started</a></li>
     <li><a class="dropdown-item" href="../articles/mapping.html">Mapping with mapgl</a></li>
+    <li><a class="dropdown-item" href="../articles/point-clustering.html">Point clustering</a></li>
     <li><a class="dropdown-item" href="../articles/h3-hexagonal-binning.html">Hexagonal binning with H3</a></li>
     <li><hr class="dropdown-divider"></li>
     <li><a class="dropdown-item" href="../articles/maplibre-tiles.html">MapLibre Tiles (MLT)</a></li>
@@ -39,6 +40,23 @@
       <small>Source: <a href="https://github.com/walkerke/freestiler/blob/HEAD/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.3.0" id="freestiler-030">freestiler 0.3.0<a class="anchor" aria-label="anchor" href="#freestiler-030"></a></h2><p class="text-muted">CRAN release: 2026-10-02</p>
+<ul><li><p>MVT output with <code>simplification = FALSE</code> now preserves line positions when a sub-pixel line part disappears during encoding. This affects multipart lines and single lines split by tile clipping. Default simplification and MLT output are unaffected.</p></li>
+<li><p>Requests for native features omitted from the CRAN build now explain how to install from R-Universe, including the platform limits of Rust DuckDB and streaming and the R DuckDB fallback.</p></li>
+<li><p>Native GeoParquet and DuckDB readers preserve DATE and timestamp properties as ISO 8601 text instead of silently replacing them with nulls (<a href="https://github.com/walkerke/freestiler/issues/18" class="external-link">#18</a>). Timestamps use a <code>T</code> separator; zoned timestamps are normalized to UTC with a <code>Z</code> suffix, independent of the DuckDB session time zone. Genuine nulls remain null. The R DuckDB fallback uses the same timestamp format; direct <code><a href="../reference/freestile.html">freestile()</a></code> calls on sf objects retain their existing behavior. Formatting zoned query timestamps does not require DuckDB’s ICU extension.</p></li>
+<li><p>Rust DuckDB queries now export geometry only as WKB, fixing failures with CRS-tagged geometry such as <code>ST_Read()</code> shapefiles (<a href="https://github.com/walkerke/freestiler/issues/19" class="external-link">#19</a>). CRS-tagged query results are now automatically reprojected to WGS84, including streaming queries. Reprojection preserves longitude/latitude axis order in both the native reader and the R DuckDB fallback used by CRAN builds.</p></li>
+<li><p>Experimental ordered categorical clustering is available through <code><a href="../reference/freestile_file.html">freestile_file()</a></code> in R and Python (<code>category</code>, <code>category_values</code>, <code>cluster_min_points</code>). It uses the pinned Supercluster 8.0.1/KDBush 4.1.0 port, with 512-tile pixel radius, typed category counts and expansion zoom. This increment requires a POINT GeoParquet file, <code>cluster_maxzoom = max_zoom</code>, and no thinning/coalescing; use a separate dot source above the cutoff. The global index is compact but resident, not out-of-core. Existing noncategorical clustering is unchanged pending the broader API migration. Output is spooled one tile at a time, exact singleton originals live on disk, and <code>FREESTILER_CLUSTER_TILE_BUDGET_MB</code> (default 256) guards decoded tile buffers and the tile-coordinate index. Numeric/string-union abbreviation fields are omitted from TileJSON’s single-type field map.</p></li>
+<li><p><code><a href="../reference/freestile_h3.html">freestile_h3()</a></code> now supports aggregate-only archives with <code>include_points = FALSE</code>, covering the complete requested zoom range without fetching a raw-point frame. Optional <code>category</code> and <code>category_values</code> add <code>point_count</code>, <code>&lt;category&gt;:&lt;value&gt;</code> counts, an <code>_other</code> count for missing or unlisted values, and modal category/count/share/tie fields. Ties have no selected category. R and Python share these semantics. All finalized hex layers are still held in memory; bounded polygon output is separate work.</p></li>
+<li><p>H3 integer aggregates are checked before host conversion and encoded as integers, including values above R’s 32-bit integer range (supported exact range: +/- (2^53 - 1)). Antimeridian repair now touches only crossing cells.</p></li>
+<li><p>PMTiles field metadata now uses TileJSON <code>Number</code>, <code>String</code>, and <code>Boolean</code> types, with a <code>field_order</code> extension preserving requested property order. <code><a href="../reference/view_h3_tiles.html">view_h3_tiles()</a></code> defaults to <code>point_count</code> for categorical output and skips H3 bookkeeping fields when choosing a numeric aggregate.</p></li>
+<li><p>The streaming point pipeline (<code><a href="../reference/freestile_query.html">freestile_query()</a></code>) now partitions the query result on disk and tiles each partition independently instead of sorting the whole dataset at once. This removes the global sort that previously spilled tens of gigabytes on very large inputs and makes billion-point tiling feasible with bounded memory. Runs that would exhaust a resource now stop with a clear error (naming the tile or region and suggesting <code>drop_rate</code> or a higher <code>min_zoom</code>) rather than degrading, and a failed run never disturbs an existing output. Optional environment variables: <code>FREESTILER_TEMP_DIR</code> (where bulk temporary data goes), <code>FREESTILER_DUCKDB_MEMORY</code>, and <code>FREESTILER_STREAM_WORKERS</code>.</p></li>
+<li><p>With <code>drop_rate</code>, streaming point thinning is now computed per partition: the per-zoom density is unchanged, but the exact set of retained points can differ from earlier releases (the sampling phase restarts per partition, so membership shifts are not limited to partition boundaries). Without <code>drop_rate</code> output is unchanged.</p></li>
+<li><p>Tile generation now uses dramatically less memory on large inputs. Encoded tiles are compressed and spooled to a temporary file as they are produced instead of being accumulated in RAM across all zoom levels, and the PMTiles archive is assembled by streaming from that spool. Together with allocation fixes in the GeoParquet reader and MVT encoder, peak memory for multi-million-feature polygon inputs drops to roughly the cost of the decoded features themselves. Note the tradeoff: tile data is staged on disk, so a build transiently needs about twice the final archive size in free space.</p></li>
+<li><p>Output archives are now written atomically: tiles are assembled in a temporary sibling file that is renamed over the destination only on success. A failed run no longer leaves a partial archive, and an existing output file is preserved until its replacement is complete. Relatedly, <code>overwrite = TRUE</code> is now respected through the DuckDB and CRS-reprojection fallback paths instead of being reset to <code>FALSE</code> internally.</p></li>
+<li><p>Identical tiles are no longer deduplicated within the archive (a micro-optimization measured at ~0.01% of archive size on real data); the PMTiles <code>clustered</code> header flag is now computed from the actual tile data layout rather than always claimed.</p></li>
+<li><p>macOS builds now use Rust’s baseline deployment target for Rust and dependency C objects instead of the host OS version. This prevents warnings when R links for an older macOS version. Explicit user deployment targets are preserved.</p></li>
+</ul></div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.2.0" id="freestiler-020">freestiler 0.2.0<a class="anchor" aria-label="anchor" href="#freestiler-020"></a></h2><p class="text-muted">CRAN release: 2026-06-24</p>
 <ul><li>Thin (sub-pixel-width) polygons no longer flicker in and out across zoom levels (<a href="https://github.com/walkerke/freestiler/issues/13" class="external-link">#13</a>). A polygon that collapses on a tile’s integer pixel grid is now replaced by a one-pixel square at its centroid instead of being dropped, so narrow features stay continuously visible. Ring winding is also normalized to the MVT specification (exterior rings positive area, interior rings negative), zero-area degenerate rings are dropped rather than emitted as invalid polygons, and quantization-induced spikes (out-and-back needle vertices) are removed.</li>
@@ -101,7 +119,7 @@
 </div>
 
 <div class="pkgdown-footer-right">
-  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.2.0.</p>
+  <p>Site built with <a href="https://pkgdown.r-lib.org/" class="external-link">pkgdown</a> 2.2.1.</p>
 </div>
 
     </footer></div>

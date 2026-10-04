@@ -22,7 +22,13 @@ Install from PyPI:
 pip install freestiler
 ```
 
-Published wheels include the full feature set: GeoPandas input, direct file tiling, DuckDB-backed file input, and SQL query support. Supported wheel targets are Python 3.9 through 3.14.
+The 0.3.0 wheels include GeoPandas input, native GeoParquet and DuckDB readers, streaming point queries, and categorical file clustering. Wheels are available for Python 3.9 through 3.14 on Linux x86-64, Windows x86-64, and macOS Apple Silicon. Other platforms need a source build.
+
+For H3 binning, also install the Python DuckDB dependency:
+
+```bash
+pip install 'freestiler[h3]'
+```
 
 ### Building from source
 
@@ -81,6 +87,27 @@ freestile_query(
     layer_name="blocks"
 )
 ```
+
+### Large point datasets
+
+Use `streaming="always"` to process a POINT query in disk-backed partitions:
+
+```python
+freestile_query(
+    "SELECT kind, ST_Point(lon, lat) AS geometry FROM read_parquet('places.parquet')",
+    "places.pmtiles",
+    layer_name="places",
+    min_zoom=3,
+    max_zoom=14,
+    base_zoom=14,
+    drop_rate=2.5,
+    streaming="always",
+)
+```
+
+This path does not support lines, polygons, or clustering. See [Planning a large job](getting-started.html#planning-a-large-job) for memory and temporary disk settings.
+
+For clusters with category counts, see [Point clustering](point-clustering.html). For hexagon-only output, category shares, and tie handling, see [Hexagonal binning with H3](h3-hexagonal-binning.html#hex-only-and-categorical-maps).
 
 ### Performance note
 
