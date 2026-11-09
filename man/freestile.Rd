@@ -22,7 +22,8 @@ freestile(
   quiet = FALSE,
   category = NULL,
   category_values = NULL,
-  cluster_min_points = 2L
+  cluster_min_points = 2L,
+  gzip_level = NULL
 )
 }
 \arguments{
@@ -86,6 +87,11 @@ values count toward \verb{category:_other}.}
 
 \item{cluster_min_points}{Integer. Minimum number of points in a categorical
 cluster (default 2).}
+
+\item{gzip_level}{Integer from 0 to 9, or NULL. Gzip level for tile data.
+NULL (default) keeps the fast level 1. Higher levels make the archive
+smaller at some cost in tiling time; tile contents do not change. Not
+available with categorical clustering.}
 }
 \value{
 The output file path (invisibly).

@@ -26,8 +26,9 @@ NULL
 #' @param cluster_distance Pixel distance for clustering (negative = off)
 #' @param cluster_maxzoom Max zoom for clustering (negative = use max_zoom - 1)
 #' @param do_coalesce Whether to coalesce features with same attributes
+#' @param gzip_level Gzip level 0-9 for tile data (negative = fast level 1)
 #' @keywords internal
-rust_freestile <- function(layers, output_path, tile_format, global_min_zoom, global_max_zoom, base_zoom, do_simplify, generate_ids, quiet, drop_rate, cluster_distance, cluster_maxzoom, do_coalesce) .Call(wrap__rust_freestile, layers, output_path, tile_format, global_min_zoom, global_max_zoom, base_zoom, do_simplify, generate_ids, quiet, drop_rate, cluster_distance, cluster_maxzoom, do_coalesce)
+rust_freestile <- function(layers, output_path, tile_format, global_min_zoom, global_max_zoom, base_zoom, do_simplify, generate_ids, quiet, drop_rate, cluster_distance, cluster_maxzoom, do_coalesce, gzip_level) .Call(wrap__rust_freestile, layers, output_path, tile_format, global_min_zoom, global_max_zoom, base_zoom, do_simplify, generate_ids, quiet, drop_rate, cluster_distance, cluster_maxzoom, do_coalesce, gzip_level)
 
 #' Create tiles from a GeoParquet file (requires geoparquet feature)
 #' @param input_path Path to the GeoParquet file

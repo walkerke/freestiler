@@ -32,7 +32,17 @@ pub struct LayerMeta {
 
 /// Gzip-compress a tile at level 1 (fast)
 pub fn gzip_compress(data: &[u8]) -> Result<Vec<u8>, String> {
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
+    gzip_compress_level(data, None)
+}
+
+/// Gzip-compress at `level` (0-9), or at the fast level 1 when `None`.
+pub fn gzip_compress_level(data: &[u8], level: Option<u32>) -> Result<Vec<u8>, String> {
+    let level = match level {
+        None => Compression::fast(),
+        Some(level) if level <= 9 => Compression::new(level),
+        Some(level) => return Err(format!("gzip level {} is outside 0-9", level)),
+    };
+    let mut encoder = GzEncoder::new(Vec::new(), level);
     encoder
         .write_all(data)
         .map_err(|e| format!("Compression error: {}", e))?;

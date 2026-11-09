@@ -44,6 +44,7 @@ impl ProgressReporter for RReporter {
 /// @param cluster_distance Pixel distance for clustering (negative = off)
 /// @param cluster_maxzoom Max zoom for clustering (negative = use max_zoom - 1)
 /// @param do_coalesce Whether to coalesce features with same attributes
+/// @param gzip_level Gzip level 0-9 for tile data (negative = fast level 1)
 /// @export
 #[extendr]
 fn rust_freestile(
@@ -60,6 +61,7 @@ fn rust_freestile(
     cluster_distance: f64,
     cluster_maxzoom: i32,
     do_coalesce: bool,
+    gzip_level: i32,
 ) -> String {
     // Parse layers from R
     let parse_start = Instant::now();
@@ -115,6 +117,7 @@ fn rust_freestile(
             None
         },
         coalesce: do_coalesce,
+        gzip_level: u32::try_from(gzip_level).ok(),
     };
 
     match engine::generate_pmtiles(&layer_data, output_path, &config, reporter.as_ref()) {
@@ -718,6 +721,7 @@ fn rust_freestile_file(
                 None
             },
             coalesce: do_coalesce,
+            gzip_level: None,
         };
 
         match engine::generate_pmtiles(&layers, output_path, &config, reporter.as_ref()) {
@@ -831,6 +835,7 @@ fn rust_freestile_duckdb(
                 None
             },
             coalesce: do_coalesce,
+            gzip_level: None,
         };
 
         match engine::generate_pmtiles(&layers, output_path, &config, reporter.as_ref()) {
@@ -940,6 +945,7 @@ fn rust_freestile_duckdb_query(
                 None
             },
             coalesce: do_coalesce,
+            gzip_level: None,
         };
 
         let maybe_stream = match streaming_mode {

@@ -1528,6 +1528,7 @@ mod tests {
             cluster_distance: None,
             cluster_maxzoom: None,
             coalesce: false,
+            gzip_level: None,
         };
         generate_pmtiles_from_duckdb_query(
             None,
@@ -1644,6 +1645,7 @@ mod tests {
             cluster_distance: None,
             cluster_maxzoom: None,
             coalesce: false,
+            gzip_level: None,
         };
         // Small unit budget + 2 workers: many units, parallel path, frequent
         // progress crossings.
@@ -1689,6 +1691,7 @@ mod tests {
             cluster_distance: None,
             cluster_maxzoom: None,
             coalesce: false,
+            gzip_level: None,
         };
         let result = generate_pmtiles_from_duckdb_query(
             None,
@@ -1724,6 +1727,7 @@ mod tests {
             cluster_distance: None,
             cluster_maxzoom: None,
             coalesce: false,
+            gzip_level: None,
         };
         let err = generate_pmtiles_from_duckdb_query(
             None,
@@ -1763,6 +1767,7 @@ mod tests {
             cluster_distance: None,
             cluster_maxzoom: None,
             coalesce: false,
+            gzip_level: None,
         };
         let result = generate_pmtiles_from_duckdb_query(
             None,
