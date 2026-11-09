@@ -32,7 +32,17 @@ pub struct LayerMeta {
 
 /// Gzip-compress a tile at level 1 (fast)
 pub fn gzip_compress(data: &[u8]) -> Result<Vec<u8>, String> {
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
+    gzip_compress_level(data, None)
+}
+
+/// Gzip-compress at `level` (0-9), or at the fast level 1 when `None`.
+pub fn gzip_compress_level(data: &[u8], level: Option<u32>) -> Result<Vec<u8>, String> {
+    let level = match level {
+        None => Compression::fast(),
+        Some(level) if level <= 9 => Compression::new(level),
+        Some(level) => return Err(format!("gzip level {} is outside 0-9", level)),
+    };
+    let mut encoder = GzEncoder::new(Vec::new(), level);
     encoder
         .write_all(data)
         .map_err(|e| format!("Compression error: {}", e))?;
@@ -111,6 +121,75 @@ impl TileSpool {
 }
 
 impl Drop for TileSpool {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+/// Append-only disk spool of raw byte ranges, read back by extent. Deleted on
+/// drop. Holds per-layer tile encodings until tiles are assembled.
+pub struct RawSpool {
+    path: PathBuf,
+    file: BufWriter<File>,
+    /// Bytes appended so far (the end of the file).
+    offset: u64,
+    /// False after a read moved the file cursor away from the end.
+    at_end: bool,
+}
+
+impl RawSpool {
+    pub fn new() -> Result<Self, String> {
+        let (file, path) = create_exclusive_temp(&std::env::temp_dir(), "freestiler_layers", true)?;
+        Ok(Self {
+            path,
+            file: BufWriter::new(file),
+            offset: 0,
+            at_end: true,
+        })
+    }
+
+    /// Append bytes and return their `(offset, length)` extent.
+    pub fn append(&mut self, bytes: &[u8]) -> Result<(u64, u32), String> {
+        let length =
+            u32::try_from(bytes.len()).map_err(|_| "Tile layer larger than 4 GiB".to_string())?;
+        if !self.at_end {
+            self.file
+                .seek(SeekFrom::Start(self.offset))
+                .map_err(|e| format!("Cannot seek layer spool: {}", e))?;
+            self.at_end = true;
+        }
+        self.file
+            .write_all(bytes)
+            .map_err(|e| format!("Cannot write layer spool: {}", e))?;
+        let extent = (self.offset, length);
+        self.offset += u64::from(length);
+        Ok(extent)
+    }
+
+    /// Append the bytes of `extent` to `out`.
+    pub fn read_into(&mut self, extent: (u64, u32), out: &mut Vec<u8>) -> Result<(), String> {
+        use std::io::Read;
+        if extent
+            .0
+            .checked_add(u64::from(extent.1))
+            .map_or(true, |end| end > self.offset)
+        {
+            return Err("Layer spool extent out of range".to_string());
+        }
+        self.file
+            .flush()
+            .map_err(|e| format!("Cannot flush layer spool: {}", e))?;
+        self.at_end = false;
+        let start = out.len();
+        out.resize(start + extent.1 as usize, 0);
+        let file = self.file.get_mut();
+        file.seek(SeekFrom::Start(extent.0))
+            .and_then(|_| file.read_exact(&mut out[start..]))
+            .map_err(|e| format!("Cannot read layer spool: {}", e))
+    }
+}
+
+impl Drop for RawSpool {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
     }

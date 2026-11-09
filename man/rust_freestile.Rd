@@ -17,7 +17,8 @@ rust_freestile(
   drop_rate,
   cluster_distance,
   cluster_maxzoom,
-  do_coalesce
+  do_coalesce,
+  gzip_level
 )
 }
 \arguments{
@@ -46,6 +47,8 @@ prop_lgl_values, min_zoom, max_zoom}
 \item{cluster_maxzoom}{Max zoom for clustering (negative = use max_zoom - 1)}
 
 \item{do_coalesce}{Whether to coalesce features with same attributes}
+
+\item{gzip_level}{Gzip level 0-9 for tile data (negative = fast level 1)}
 }
 \description{
 Create vector tiles from spatial data (multi-layer support)

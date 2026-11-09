@@ -44,6 +44,7 @@ impl ProgressReporter for RReporter {
 /// @param cluster_distance Pixel distance for clustering (negative = off)
 /// @param cluster_maxzoom Max zoom for clustering (negative = use max_zoom - 1)
 /// @param do_coalesce Whether to coalesce features with same attributes
+/// @param gzip_level Gzip level 0-9 for tile data (negative = fast level 1)
 /// @export
 #[extendr]
 fn rust_freestile(
@@ -60,16 +61,45 @@ fn rust_freestile(
     cluster_distance: f64,
     cluster_maxzoom: i32,
     do_coalesce: bool,
+    gzip_level: i32,
 ) -> String {
-    // Parse layers from R
-    let parse_start = Instant::now();
-    let layer_data = parse_layers_from_r(&layers, generate_ids);
-
     let reporter: Box<dyn ProgressReporter> = if quiet {
         Box::new(engine::SilentReporter)
     } else {
         Box::new(RReporter)
     };
+    let config = make_config(
+        tile_format,
+        global_min_zoom,
+        global_max_zoom,
+        base_zoom,
+        do_simplify,
+        drop_rate,
+        cluster_distance,
+        cluster_maxzoom,
+        do_coalesce,
+        gzip_level,
+    );
+
+    if layers.len() > 1 {
+        // Parse and tile one layer at a time, so the Rust copy of the
+        // features is never held for every layer at once. The archive is
+        // byte-identical to the all-layer path below.
+        return match freestile_layered(
+            &layers,
+            output_path,
+            config,
+            generate_ids,
+            reporter.as_ref(),
+        ) {
+            Ok(()) => output_path.to_string(),
+            Err(e) => format!("Error: {}", e),
+        };
+    }
+
+    // Parse layers from R
+    let parse_start = Instant::now();
+    let layer_data = parse_layers_from_r(&layers, generate_ids);
 
     if !quiet {
         let total_features: usize = layer_data.iter().map(|l| l.features.len()).sum();
@@ -86,13 +116,33 @@ fn rust_freestile(
         return "Error: No valid features to tile".to_string();
     }
 
-    let config = TileConfig {
+    match engine::generate_pmtiles(&layer_data, output_path, &config, reporter.as_ref()) {
+        Ok(()) => output_path.to_string(),
+        Err(e) => format!("Error: {}", e),
+    }
+}
+
+/// Map the R-side sentinel values (negative = unset) to a TileConfig.
+#[allow(clippy::too_many_arguments)]
+fn make_config(
+    tile_format: &str,
+    min_zoom: i32,
+    max_zoom: i32,
+    base_zoom: i32,
+    do_simplify: bool,
+    drop_rate: f64,
+    cluster_distance: f64,
+    cluster_maxzoom: i32,
+    do_coalesce: bool,
+    gzip_level: i32,
+) -> TileConfig {
+    TileConfig {
         tile_format: match tile_format {
             "mlt" => TileFormat::Mlt,
             _ => TileFormat::Mvt,
         },
-        min_zoom: global_min_zoom as u8,
-        max_zoom: global_max_zoom as u8,
+        min_zoom: min_zoom as u8,
+        max_zoom: max_zoom as u8,
         base_zoom: if base_zoom < 0 {
             None
         } else {
@@ -115,12 +165,35 @@ fn rust_freestile(
             None
         },
         coalesce: do_coalesce,
-    };
-
-    match engine::generate_pmtiles(&layer_data, output_path, &config, reporter.as_ref()) {
-        Ok(()) => output_path.to_string(),
-        Err(e) => format!("Error: {}", e),
+        gzip_level: u32::try_from(gzip_level).ok(),
     }
+}
+
+/// Multi-layer tiling with one parsed layer in memory at a time.
+fn freestile_layered(
+    layers: &List,
+    output_path: &str,
+    config: TileConfig,
+    generate_ids: bool,
+    reporter: &dyn ProgressReporter,
+) -> std::result::Result<(), String> {
+    let parse_start = Instant::now();
+    let mut tiler = engine::LayeredTiler::new(config)?;
+    let mut features = 0usize;
+    for_each_layer_from_r(layers, generate_ids, &mut |layer| {
+        features += layer.features.len();
+        tiler.add_layer(layer, reporter)
+    })?;
+    reporter.report(&format!(
+        "  Tiled {} features across {} layers in {:.1}s",
+        features,
+        tiler.layer_count(),
+        parse_start.elapsed().as_secs_f64()
+    ));
+    if features == 0 {
+        return Err("No valid features to tile".to_string());
+    }
+    tiler.finish(output_path, reporter)
 }
 
 // ---------------------------------------------------------------------------
@@ -141,8 +214,24 @@ fn rust_freestile(
 ///   9: min_zoom (integer)
 ///  10: max_zoom (integer)
 fn parse_layers_from_r(layers: &List, generate_ids: bool) -> Vec<LayerData> {
+    let mut result = Vec::with_capacity(layers.len());
+    for_each_layer_from_r(layers, generate_ids, &mut |layer| {
+        result.push(layer);
+        Ok(())
+    })
+    .expect("collecting layers cannot fail");
+    result
+}
+
+/// Parse each layer in turn and hand it to `visit`, so a caller can process
+/// and drop it before the next one is parsed. Feature IDs continue across
+/// layers exactly as in [`parse_layers_from_r`].
+fn for_each_layer_from_r(
+    layers: &List,
+    generate_ids: bool,
+    visit: &mut dyn FnMut(LayerData) -> std::result::Result<(), String>,
+) -> std::result::Result<(), String> {
     let n_layers = layers.len();
-    let mut result = Vec::with_capacity(n_layers);
 
     // Running ID counter across all layers for unique IDs
     let mut id_offset: u64 = 0;
@@ -253,17 +342,17 @@ fn parse_layers_from_r(layers: &List, generate_ids: bool) -> Vec<LayerData> {
             }
         }
 
-        result.push(LayerData {
+        visit(LayerData {
             name,
             features,
             prop_names,
             prop_types,
             min_zoom: layer_min_zoom,
             max_zoom: layer_max_zoom,
-        });
+        })?;
     }
 
-    result
+    Ok(())
 }
 
 /// Extract a character vector from a list element at the given position.
@@ -718,6 +807,7 @@ fn rust_freestile_file(
                 None
             },
             coalesce: do_coalesce,
+            gzip_level: None,
         };
 
         match engine::generate_pmtiles(&layers, output_path, &config, reporter.as_ref()) {
@@ -831,6 +921,7 @@ fn rust_freestile_duckdb(
                 None
             },
             coalesce: do_coalesce,
+            gzip_level: None,
         };
 
         match engine::generate_pmtiles(&layers, output_path, &config, reporter.as_ref()) {
@@ -940,6 +1031,7 @@ fn rust_freestile_duckdb_query(
                 None
             },
             coalesce: do_coalesce,
+            gzip_level: None,
         };
 
         let maybe_stream = match streaming_mode {

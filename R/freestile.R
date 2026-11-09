@@ -90,6 +90,10 @@ freestile_layer <- function(input, min_zoom = NULL, max_zoom = NULL) {
 #'   values count toward `category:_other`.
 #' @param cluster_min_points Integer. Minimum number of points in a categorical
 #'   cluster (default 2).
+#' @param gzip_level Integer from 0 to 9, or NULL. Gzip level for tile data.
+#'   NULL (default) keeps the fast level 1. Higher levels make the archive
+#'   smaller at some cost in tiling time; tile contents do not change. Not
+#'   available with categorical clustering.
 #'
 #' @details With `category`, clustering uses the ordered Supercluster algorithm
 #'   with a 512-pixel tile extent. Input row order affects membership. Above
@@ -143,7 +147,8 @@ freestile <- function(
     quiet = FALSE,
     category = NULL,
     category_values = NULL,
-    cluster_min_points = 2L
+    cluster_min_points = 2L,
+    gzip_level = NULL
 ) {
   tile_format <- match.arg(tile_format, c("mvt", "mlt"))
 
@@ -161,6 +166,15 @@ freestile <- function(
       category_values, base_zoom, drop_rate, coalesce, simplification)
   } else if (!missing(cluster_min_points)) {
     stop("cluster_min_points requires category and category_values.", call. = FALSE)
+  }
+  if (!is.null(gzip_level)) {
+    if (categorical) {
+      stop("gzip_level is not supported with categorical clustering.", call. = FALSE)
+    }
+    if (!is.numeric(gzip_level) || length(gzip_level) != 1 || is.na(gzip_level) ||
+        gzip_level != round(gzip_level) || gzip_level < 0 || gzip_level > 9) {
+      stop("gzip_level must be a whole number from 0 to 9.", call. = FALSE)
+    }
   }
 
   # Determine default layer_name from output if single-layer
@@ -248,7 +262,8 @@ freestile <- function(
       drop_rate = if (is.null(drop_rate)) -1.0 else as.double(drop_rate),
       cluster_distance = if (is.null(cluster_distance)) -1.0 else as.double(cluster_distance),
       cluster_maxzoom = if (is.null(cluster_maxzoom)) -1L else as.integer(cluster_maxzoom),
-      do_coalesce = coalesce
+      do_coalesce = coalesce,
+      gzip_level = if (is.null(gzip_level)) -1L else as.integer(gzip_level)
     )
   }
 

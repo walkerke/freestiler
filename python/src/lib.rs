@@ -48,7 +48,23 @@ fn parse_layers_from_py(
 ) -> PyResult<Vec<LayerData>> {
     let mut result = Vec::new();
     let mut id_offset: u64 = 0;
+    for_each_layer_from_py(py, layers, generate_ids, &mut id_offset, &mut |layer| {
+        result.push(layer);
+        Ok(())
+    })?;
+    Ok(result)
+}
 
+/// Parse each layer dict in turn and hand it to `visit`. With
+/// `generate_ids`, IDs continue from `id_offset`, which advances by the number
+/// of parsed features, so IDs stay unique across calls.
+fn for_each_layer_from_py(
+    py: Python<'_>,
+    layers: &[Py<PyAny>],
+    generate_ids: bool,
+    id_offset: &mut u64,
+    visit: &mut dyn FnMut(LayerData) -> PyResult<()>,
+) -> PyResult<()> {
     for (_layer_idx, layer_obj) in layers.iter().enumerate() {
         let layer = layer_obj.bind(py);
 
@@ -195,7 +211,7 @@ fn parse_layers_from_py(
                 }
 
                 let id = if generate_ids {
-                    Some((i as u64 + 1) + id_offset)
+                    Some((i as u64 + 1) + *id_offset)
                 } else {
                     None
                 };
@@ -209,74 +225,41 @@ fn parse_layers_from_py(
         }
 
         if generate_ids {
-            id_offset += features.len() as u64;
+            *id_offset += features.len() as u64;
         }
 
-        result.push(LayerData {
+        visit(LayerData {
             name,
             features,
             prop_names,
             prop_types,
             min_zoom: layer_min_zoom,
             max_zoom: layer_max_zoom,
-        });
+        })?;
     }
 
-    Ok(result)
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
 // Main tiling function
 // ---------------------------------------------------------------------------
 
-#[pyfunction]
-#[pyo3(signature = (layers, output_path, tile_format, min_zoom, max_zoom,
-    base_zoom, do_simplify, generate_ids, quiet, drop_rate, cluster_distance,
-    cluster_maxzoom, do_coalesce))]
-fn _freestile(
-    py: Python<'_>,
-    layers: Vec<Py<PyAny>>,
-    output_path: &str,
+/// Map the Python-side sentinel values (negative = unset) to a TileConfig.
+#[allow(clippy::too_many_arguments)]
+fn make_config(
     tile_format: &str,
     min_zoom: u8,
     max_zoom: u8,
     base_zoom: i32,
     do_simplify: bool,
-    generate_ids: bool,
-    quiet: bool,
     drop_rate: f64,
     cluster_distance: f64,
     cluster_maxzoom: i32,
     do_coalesce: bool,
-) -> PyResult<String> {
-    // Parse layers from Python dicts
-    let parse_start = Instant::now();
-    let layer_data = parse_layers_from_py(py, &layers, generate_ids)?;
-
-    let reporter: Box<dyn ProgressReporter> = if quiet {
-        Box::new(engine::SilentReporter)
-    } else {
-        Box::new(PyReporter)
-    };
-
-    if !quiet {
-        let total_features: usize = layer_data.iter().map(|l| l.features.len()).sum();
-        reporter.report(&format!(
-            "  Parsed {} features across {} layer{} in {:.1}s",
-            total_features,
-            layer_data.len(),
-            if layer_data.len() != 1 { "s" } else { "" },
-            parse_start.elapsed().as_secs_f64()
-        ));
-    }
-
-    if layer_data.iter().all(|l| l.features.is_empty()) {
-        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-            "No valid features to tile",
-        ));
-    }
-
-    let config = TileConfig {
+    gzip_level: Option<u32>,
+) -> TileConfig {
+    TileConfig {
         tile_format: match tile_format {
             "mlt" => TileFormat::Mlt,
             _ => TileFormat::Mvt,
@@ -305,7 +288,186 @@ fn _freestile(
             None
         },
         coalesce: do_coalesce,
+        gzip_level,
+    }
+}
+
+/// Multi-layer tiling with one layer in memory at a time. Layers are added
+/// in output order; the archive is byte-identical to `_freestile` with the
+/// same layers.
+#[pyclass(module = "freestiler._freestiler")]
+struct _LayeredTiler {
+    inner: Option<engine::LayeredTiler>,
+    generate_ids: bool,
+    id_offset: u64,
+    features: usize,
+    quiet: bool,
+}
+
+#[pymethods]
+impl _LayeredTiler {
+    #[new]
+    #[pyo3(signature = (tile_format, min_zoom, max_zoom, base_zoom, do_simplify,
+        generate_ids, quiet, drop_rate, cluster_distance, cluster_maxzoom, do_coalesce,
+        gzip_level=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        tile_format: &str,
+        min_zoom: u8,
+        max_zoom: u8,
+        base_zoom: i32,
+        do_simplify: bool,
+        generate_ids: bool,
+        quiet: bool,
+        drop_rate: f64,
+        cluster_distance: f64,
+        cluster_maxzoom: i32,
+        do_coalesce: bool,
+        gzip_level: Option<u32>,
+    ) -> PyResult<Self> {
+        let config = make_config(
+            tile_format,
+            min_zoom,
+            max_zoom,
+            base_zoom,
+            do_simplify,
+            drop_rate,
+            cluster_distance,
+            cluster_maxzoom,
+            do_coalesce,
+            gzip_level,
+        );
+        let inner = engine::LayeredTiler::new(config).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Error: {}", e))
+        })?;
+        Ok(Self {
+            inner: Some(inner),
+            generate_ids,
+            id_offset: 0,
+            features: 0,
+            quiet,
+        })
+    }
+
+    /// Parse, tile and spool one layer dict (as built by `_preprocess_layer`).
+    /// Returns the number of features tiled.
+    fn add_layer(&mut self, py: Python<'_>, layer: Py<PyAny>) -> PyResult<usize> {
+        let tiler = self.inner.as_mut().ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("tiler already finished")
+        })?;
+        let mut parsed = None;
+        for_each_layer_from_py(
+            py,
+            std::slice::from_ref(&layer),
+            self.generate_ids,
+            &mut self.id_offset,
+            &mut |data| {
+                parsed = Some(data);
+                Ok(())
+            },
+        )?;
+        drop(layer);
+        let data = parsed.expect("one layer dict yields one layer");
+        let count = data.features.len();
+        self.features += count;
+        let quiet = self.quiet;
+        py.detach(|| {
+            let reporter: Box<dyn ProgressReporter> = if quiet {
+                Box::new(engine::SilentReporter)
+            } else {
+                Box::new(PyReporter)
+            };
+            tiler.add_layer(data, reporter.as_ref())
+        })
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Error: {}", e)))?;
+        Ok(count)
+    }
+
+    /// Write the archive. The tiler cannot be used afterwards.
+    fn finish(&mut self, py: Python<'_>, output_path: &str) -> PyResult<String> {
+        let tiler = self.inner.take().ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("tiler already finished")
+        })?;
+        if self.features == 0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "No valid features to tile",
+            ));
+        }
+        let quiet = self.quiet;
+        let output = output_path.to_string();
+        py.detach(move || {
+            let reporter: Box<dyn ProgressReporter> = if quiet {
+                Box::new(engine::SilentReporter)
+            } else {
+                Box::new(PyReporter)
+            };
+            tiler.finish(&output, reporter.as_ref())
+        })
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Error: {}", e)))?;
+        Ok(output_path.to_string())
+    }
+}
+
+#[pyfunction]
+#[pyo3(signature = (layers, output_path, tile_format, min_zoom, max_zoom,
+    base_zoom, do_simplify, generate_ids, quiet, drop_rate, cluster_distance,
+    cluster_maxzoom, do_coalesce, gzip_level=None))]
+fn _freestile(
+    py: Python<'_>,
+    layers: Vec<Py<PyAny>>,
+    output_path: &str,
+    tile_format: &str,
+    min_zoom: u8,
+    max_zoom: u8,
+    base_zoom: i32,
+    do_simplify: bool,
+    generate_ids: bool,
+    quiet: bool,
+    drop_rate: f64,
+    cluster_distance: f64,
+    cluster_maxzoom: i32,
+    do_coalesce: bool,
+    gzip_level: Option<u32>,
+) -> PyResult<String> {
+    // Parse layers from Python dicts
+    let parse_start = Instant::now();
+    let layer_data = parse_layers_from_py(py, &layers, generate_ids)?;
+
+    let reporter: Box<dyn ProgressReporter> = if quiet {
+        Box::new(engine::SilentReporter)
+    } else {
+        Box::new(PyReporter)
     };
+
+    if !quiet {
+        let total_features: usize = layer_data.iter().map(|l| l.features.len()).sum();
+        reporter.report(&format!(
+            "  Parsed {} features across {} layer{} in {:.1}s",
+            total_features,
+            layer_data.len(),
+            if layer_data.len() != 1 { "s" } else { "" },
+            parse_start.elapsed().as_secs_f64()
+        ));
+    }
+
+    if layer_data.iter().all(|l| l.features.is_empty()) {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "No valid features to tile",
+        ));
+    }
+
+    let config = make_config(
+        tile_format,
+        min_zoom,
+        max_zoom,
+        base_zoom,
+        do_simplify,
+        drop_rate,
+        cluster_distance,
+        cluster_maxzoom,
+        do_coalesce,
+        gzip_level,
+    );
 
     match engine::generate_pmtiles(&layer_data, output_path, &config, reporter.as_ref()) {
         Ok(()) => Ok(output_path.to_string()),
@@ -384,6 +546,7 @@ fn _freestile_file(
             None
         },
         coalesce: do_coalesce,
+        gzip_level: None,
     };
 
     match engine::generate_pmtiles(&layers, output_path, &config, reporter.as_ref()) {
@@ -453,6 +616,7 @@ fn _freestile_duckdb_query(
             None
         },
         coalesce: do_coalesce,
+        gzip_level: None,
     };
 
     let maybe_stream = match streaming_mode {
@@ -576,6 +740,7 @@ fn _freestile_duckdb(
             None
         },
         coalesce: do_coalesce,
+        gzip_level: None,
     };
 
     match engine::generate_pmtiles(&layers, output_path, &config, reporter.as_ref()) {
@@ -592,6 +757,7 @@ fn _freestile_duckdb(
 fn _freestiler(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(_cluster_layers, m)?)?;
     m.add_function(wrap_pyfunction!(_freestile, m)?)?;
+    m.add_class::<_LayeredTiler>()?;
     #[cfg(feature = "geoparquet")]
     m.add_function(wrap_pyfunction!(_cluster_file, m)?)?;
     #[cfg(feature = "geoparquet")]

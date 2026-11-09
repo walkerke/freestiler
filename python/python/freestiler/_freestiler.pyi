@@ -14,6 +14,7 @@ def _freestile(
     cluster_distance: float,
     cluster_maxzoom: int,
     do_coalesce: bool,
+    gzip_level: int | None = None,
 ) -> str: ...
 
 def _freestile_file(
@@ -65,3 +66,23 @@ def _freestile_duckdb_query(
     do_coalesce: bool,
     streaming_mode: str,
 ) -> str: ...
+
+
+class _LayeredTiler:
+    def __init__(
+        self,
+        tile_format: str,
+        min_zoom: int,
+        max_zoom: int,
+        base_zoom: int,
+        do_simplify: bool,
+        generate_ids: bool,
+        quiet: bool,
+        drop_rate: float,
+        cluster_distance: float,
+        cluster_maxzoom: int,
+        do_coalesce: bool,
+        gzip_level: int | None = None,
+    ) -> None: ...
+    def add_layer(self, layer: dict) -> int: ...
+    def finish(self, output_path: str) -> str: ...

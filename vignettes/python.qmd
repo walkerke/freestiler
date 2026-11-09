@@ -74,6 +74,22 @@ freestile(
 )
 ```
 
+Layers are tiled one at a time, so peak memory follows the largest layer.
+To avoid loading every GeoDataFrame up front, `freestile_layers()` takes
+`(name, source)` pairs, where a source can also be a GeoParquet path or a
+function that returns a GeoDataFrame. Each source is read when its turn comes:
+
+``` python
+from freestiler import freestile_layers
+
+freestile_layers(
+    [("parcels", "parcels.parquet"), ("buildings", "buildings.parquet")],
+    "city.pmtiles",
+    min_zoom=12,
+    max_zoom=16,
+)
+```
+
 File input and DuckDB queries work the same way:
 
 ``` python

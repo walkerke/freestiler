@@ -18,6 +18,10 @@ pub struct TileConfig {
     pub cluster_distance: Option<f64>,
     pub cluster_maxzoom: Option<u8>,
     pub coalesce: bool,
+    /// Gzip level (0-9) for tile data written by `generate_pmtiles`. `None`
+    /// keeps the fast level 1. Tile contents do not change; a higher level
+    /// only makes the archive smaller, at some cost in encode time.
+    pub gzip_level: Option<u32>,
 }
 
 /// Progress reporting trait for binding-specific output
@@ -68,6 +72,20 @@ pub fn generate_tiles(
     config: &TileConfig,
     reporter: &dyn ProgressReporter,
     spool: &mut TileSpool,
+) -> Result<(), String> {
+    generate_tiles_into(layers, config, reporter, true, &mut |coord, bytes| {
+        spool.write_compressed_tile(coord, bytes)
+    })
+}
+
+/// Shared tile loop. Emits each non-empty tile in ascending tile_id order,
+/// gzip-compressed when `compress` is set, otherwise as raw tile bytes.
+fn generate_tiles_into(
+    layers: &[LayerData],
+    config: &TileConfig,
+    reporter: &dyn ProgressReporter,
+    compress: bool,
+    emit: &mut dyn FnMut(TileCoord, &[u8]) -> Result<(), String>,
 ) -> Result<(), String> {
     let min_z = config.min_zoom;
     let max_z = config.max_zoom;
@@ -364,14 +382,18 @@ pub fn generate_tiles(
                         return None;
                     }
 
-                    let compressed = pmtiles_writer::gzip_compress(&tile_bytes)
-                        .expect("gzip compression failed");
+                    if !compress {
+                        return Some((coord, tile_bytes));
+                    }
+                    let compressed =
+                        pmtiles_writer::gzip_compress_level(&tile_bytes, config.gzip_level)
+                            .expect("gzip compression failed");
                     Some((coord, compressed))
                 })
                 .collect();
 
-            for (coord, compressed) in &chunk_tiles {
-                spool.write_compressed_tile(*coord, compressed)?;
+            for (coord, bytes) in &chunk_tiles {
+                emit(*coord, bytes)?;
             }
             n_encoded += chunk_tiles.len() as u64;
         }
@@ -394,6 +416,38 @@ pub fn generate_tiles(
     Ok(())
 }
 
+/// TileJSON layer metadata; clustered point layers gain `point_count`.
+fn layer_meta(l: &LayerData, clustered: bool) -> pmtiles_writer::LayerMeta {
+    let mut names = l.prop_names.clone();
+    let mut types = l.prop_types.clone();
+    if clustered {
+        names.push("point_count".to_string());
+        types.push("integer".to_string());
+    }
+    // Detect predominant geometry type from first feature
+    let geometry_type = l.features.first().map(|f| match &f.geometry {
+        Geometry::Point(_) | Geometry::MultiPoint(_) => "Point".to_string(),
+        Geometry::LineString(_) | Geometry::MultiLineString(_) => "Line".to_string(),
+        Geometry::Polygon(_) | Geometry::MultiPolygon(_) => "Polygon".to_string(),
+    });
+    pmtiles_writer::LayerMeta {
+        name: l.name.clone(),
+        property_names: names,
+        property_types: types,
+        min_zoom: l.min_zoom,
+        max_zoom: l.max_zoom,
+        geometry_type,
+    }
+}
+
+/// Refuse a gzip level outside 0-9 before any output is produced.
+fn validate_gzip_level(config: &TileConfig) -> Result<(), String> {
+    if config.gzip_level.map_or(false, |level| level > 9) {
+        return Err("gzip_level must be between 0 and 9".to_string());
+    }
+    Ok(())
+}
+
 /// Full pipeline: generate tiles and write PMTiles archive
 pub fn generate_pmtiles(
     layers: &[LayerData],
@@ -401,6 +455,7 @@ pub fn generate_pmtiles(
     config: &TileConfig,
     reporter: &dyn ProgressReporter,
 ) -> Result<(), String> {
+    validate_gzip_level(config)?;
     let bounds = compute_all_bounds(layers);
 
     // Build layer metadata for PMTiles
@@ -418,29 +473,7 @@ pub fn generate_pmtiles(
     let layer_metas: Vec<pmtiles_writer::LayerMeta> = layers
         .iter()
         .enumerate()
-        .map(|(li, l)| {
-            let mut names = l.prop_names.clone();
-            let mut types = l.prop_types.clone();
-            if use_cluster && is_point_layer[li] {
-                names.push("point_count".to_string());
-                types.push("integer".to_string());
-            }
-            // Detect predominant geometry type from first feature
-            let geometry_type = l.features.first().map(|f| match &f.geometry {
-                Geometry::Point(_) | Geometry::MultiPoint(_) => "Point".to_string(),
-                Geometry::LineString(_) | Geometry::MultiLineString(_) => "Line".to_string(),
-                Geometry::Polygon(_) | Geometry::MultiPolygon(_) => "Polygon".to_string(),
-            });
-
-            pmtiles_writer::LayerMeta {
-                name: l.name.clone(),
-                property_names: names,
-                property_types: types,
-                min_zoom: l.min_zoom,
-                max_zoom: l.max_zoom,
-                geometry_type,
-            }
-        })
+        .map(|(li, l)| layer_meta(l, use_cluster && is_point_layer[li]))
         .collect();
 
     let mut spool = TileSpool::new()?;
@@ -466,4 +499,160 @@ pub fn generate_pmtiles(
     ));
 
     Ok(())
+}
+
+/// Builds a multi-layer tileset one layer at a time, so peak memory follows
+/// the largest layer rather than the sum of all layers.
+///
+/// Each layer is tiled on its own and its per-tile encodings (raw MVT/MLT
+/// layer messages) go to a disk spool with a small `(tile, layer) -> extent`
+/// index. [`LayeredTiler::finish`] concatenates the encodings of each tile in
+/// layer order and gzips them. In both formats a tile is a sequence of
+/// independently encoded layers, and every per-layer step (clipping,
+/// snapping, dropping, clustering, coalescing, feature ordering) depends only
+/// on that layer, so the archive is byte-identical to [`generate_pmtiles`]
+/// given the same layers in the same order.
+pub struct LayeredTiler {
+    config: TileConfig,
+    spool: pmtiles_writer::RawSpool,
+    /// tile_id -> (coord, [(offset, length)] in layer order)
+    index: std::collections::BTreeMap<u64, (TileCoord, Vec<(u64, u32)>)>,
+    metas: Vec<pmtiles_writer::LayerMeta>,
+    bounds: (f64, f64, f64, f64),
+    assembly_budget: u64,
+}
+
+impl LayeredTiler {
+    /// Default raw bytes held while assembling tiles (64 MiB). A single
+    /// tile larger than the budget is still assembled on its own.
+    pub const DEFAULT_ASSEMBLY_BUDGET: u64 = 64 << 20;
+
+    pub fn new(config: TileConfig) -> Result<Self, String> {
+        validate_gzip_level(&config)?;
+        Ok(Self {
+            config,
+            spool: pmtiles_writer::RawSpool::new()?,
+            index: std::collections::BTreeMap::new(),
+            metas: Vec::new(),
+            bounds: (f64::MAX, f64::MAX, f64::MIN, f64::MIN),
+            assembly_budget: Self::DEFAULT_ASSEMBLY_BUDGET,
+        })
+    }
+
+    /// Set the raw bytes held at once while assembling tiles in
+    /// [`finish`](Self::finish). Output does not depend on it.
+    pub fn set_assembly_budget(&mut self, bytes: u64) {
+        self.assembly_budget = bytes;
+    }
+
+    /// Number of layers added so far.
+    pub fn layer_count(&self) -> usize {
+        self.metas.len()
+    }
+
+    /// Tile one layer, spool its encodings, and drop it.
+    pub fn add_layer(
+        &mut self,
+        layer: LayerData,
+        reporter: &dyn ProgressReporter,
+    ) -> Result<(), String> {
+        let use_cluster = self.config.cluster_distance.map_or(false, |d| d > 0.0);
+        let is_point = !layer.features.is_empty()
+            && layer
+                .features
+                .iter()
+                .all(|f| matches!(&f.geometry, Geometry::Point(_) | Geometry::MultiPoint(_)));
+        reporter.report(&format!(
+            "  Layer '{}': {} features (zoom {}-{})",
+            layer.name,
+            layer.features.len(),
+            layer.min_zoom,
+            layer.max_zoom
+        ));
+        self.metas.push(layer_meta(&layer, use_cluster && is_point));
+        let (w, s, e, n) = compute_all_bounds(std::slice::from_ref(&layer));
+        self.bounds = (
+            self.bounds.0.min(w),
+            self.bounds.1.min(s),
+            self.bounds.2.max(e),
+            self.bounds.3.max(n),
+        );
+        let spool = &mut self.spool;
+        let index = &mut self.index;
+        generate_tiles_into(
+            std::slice::from_ref(&layer),
+            &self.config,
+            reporter,
+            false,
+            &mut |coord, bytes| {
+                let extent = spool.append(bytes)?;
+                index
+                    .entry(tile_id(coord.z, coord.x as u64, coord.y as u64))
+                    .or_insert_with(|| (coord, Vec::new()))
+                    .1
+                    .push(extent);
+                Ok(())
+            },
+        )
+    }
+
+    /// Assemble the archive. Fails, like [`generate_pmtiles`], when no layer
+    /// produced a tile.
+    pub fn finish(
+        mut self,
+        output_path: &str,
+        reporter: &dyn ProgressReporter,
+    ) -> Result<(), String> {
+        let mut tiles = TileSpool::new()?;
+        let entries: Vec<_> = std::mem::take(&mut self.index).into_values().collect();
+        // Assemble tiles in batches bounded by both a tile count (for
+        // parallel compression) and the raw bytes held at once, so memory
+        // does not grow with the number of layers stacked in each tile.
+        let chunk_size = rayon::current_num_threads().saturating_mul(4).max(16);
+        let mut start = 0;
+        while start < entries.len() {
+            let mut end = start;
+            let mut held: u64 = 0;
+            while end < entries.len()
+                && end - start < chunk_size
+                && (end == start || held < self.assembly_budget)
+            {
+                held += entries[end].1.iter().map(|e| u64::from(e.1)).sum::<u64>();
+                end += 1;
+            }
+            let mut raw = Vec::with_capacity(end - start);
+            for (coord, extents) in &entries[start..end] {
+                let mut bytes = Vec::new();
+                for &extent in extents {
+                    self.spool.read_into(extent, &mut bytes)?;
+                }
+                raw.push((*coord, bytes));
+            }
+            let compressed: Vec<(TileCoord, Result<Vec<u8>, String>)> = raw
+                .into_par_iter()
+                .map(|(coord, bytes)| {
+                    let level = self.config.gzip_level;
+                    (coord, pmtiles_writer::gzip_compress_level(&bytes, level))
+                })
+                .collect();
+            for (coord, bytes) in compressed {
+                tiles.write_compressed_tile(coord, &bytes?)?;
+            }
+            start = end;
+        }
+        reporter.report(&format!(
+            "  Writing PMTiles archive ({} tiles from {} layers) ...",
+            tiles.len(),
+            self.metas.len()
+        ));
+        pmtiles_writer::write_pmtiles_from_spool(
+            output_path,
+            &mut tiles,
+            self.config.tile_format,
+            &self.metas,
+            self.config.min_zoom,
+            self.config.max_zoom,
+            self.bounds,
+        )
+    }
 }

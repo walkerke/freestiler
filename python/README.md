@@ -64,6 +64,27 @@ freestile_query(
 For very large point tables, use `streaming="always"` and prefer
 `tile_format="mvt"` for maximum viewer compatibility.
 
+### Large multi-layer tilesets
+
+Multi-layer archives are built one layer at a time, so peak memory follows the
+largest layer rather than the sum of all layers. `freestile()` does this for
+any dict of layers. `freestile_layers()` also loads each layer only when its
+turn comes: pass `(name, source)` pairs or a generator, where a source is a
+GeoDataFrame, a `FreestileLayer`, a GeoParquet path or a callable.
+
+```python
+from freestiler import freestile_layers
+
+freestile_layers(
+    ((f"depth_{t}", f"depth_{t}.parquet") for t in range(10)),
+    "results.pmtiles",
+    min_zoom=10,
+    max_zoom=15,
+)
+```
+
+The archive is byte-identical to tiling the same layers in memory.
+
 ### Hexagonal binning
 
 `freestile_h3()` aggregates points into H3 hexagons at zoom-appropriate

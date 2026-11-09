@@ -1,11 +1,31 @@
 # freestiler 0.3.0.9000
 
+* Multi-layer tilesets are now tiled one layer at a time, so peak memory
+  follows the largest layer instead of the sum of all layers (#17). Each
+  layer's tiles are spooled to a temporary file and joined per tile at the
+  end. MVT and MLT tiles are sequences of independently encoded layers, so the
+  archive is byte-identical to tiling every layer at once. `freestile()` uses
+  this for every multi-layer call in R and Python. The new Python
+  `freestile_layers()` also loads layers lazily: it accepts `(name, source)`
+  pairs or a generator, where a source is a GeoDataFrame, a `FreestileLayer`,
+  a GeoParquet path or a callable.
+
 * `freestile()` now accepts `category`, `category_values`, and
   `cluster_min_points` for a single POINT sf object or GeoDataFrame. Category
   counts use the same Supercluster engine as file clustering, with individual
   points above `cluster_maxzoom` in the same archive. The in-memory path works
   without GeoParquet or DuckDB support, including in the CRAN build. Existing
   calls without category options retain their clustering behavior.
+
+* `coalesce = TRUE` now produces the same archive on every run. Coalesced
+  groups were emitted in hash-map order, which changes from run to run; they
+  now keep the order in which their first feature appears in the tile.
+
+* `freestile()` gains `gzip_level` in R and Python to set the gzip level of
+  tile data (0-9). The default stays the fast level 1, so existing output is
+  unchanged. Higher levels only change compression: decompressed tiles are
+  identical. On a dense polygon grid, level 6 made the archive 14% smaller
+  for about 17% more tiling time; on scattered points the saving was 6%.
 
 # freestiler 0.3.0
 

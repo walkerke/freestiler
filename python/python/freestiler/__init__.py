@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
+import os
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Union
+from typing import Callable, Iterable, Mapping, Tuple, Union
 
 import geopandas as gpd
 import numpy as np
 import shapely
 
-from freestiler._freestiler import _freestile
+from freestiler._freestiler import _freestile, _LayeredTiler
 
 try:
     from freestiler._freestiler import _freestile_file as _freestile_file_rs
@@ -98,6 +99,7 @@ def freestile(
     category: str | None = None,
     category_values: list | None = None,
     cluster_min_points: int = 2,
+    gzip_level: int | None = None,
 ) -> Path:
     """Create a PMTiles archive from geospatial data.
 
@@ -149,6 +151,11 @@ def freestile(
         Missing and unlisted values count toward category:_other.
     cluster_min_points : int
         Minimum points per categorical cluster (default 2).
+    gzip_level : int, optional
+        Gzip level 0-9 for tile data. None (default) keeps the fast level 1.
+        Higher levels make the archive smaller at some cost in tiling time;
+        tile contents do not change. Not available with categorical
+        clustering.
 
     Returns
     -------
@@ -197,6 +204,10 @@ def freestile(
             raise ValueError("category_values must be distinct, uniformly typed strings or JS-safe integers")
     elif cluster_min_points != 2:
         raise ValueError("cluster_min_points requires category and category_values")
+    if gzip_level is not None:
+        if categorical:
+            raise ValueError("gzip_level is not supported with categorical clustering")
+        gzip_level = _check_gzip_level(gzip_level)
 
     # Determine default layer_name
     if layer_name is None and isinstance(input, gpd.GeoDataFrame):
@@ -227,6 +238,20 @@ def freestile(
             f"for {total_features} features across {n_layers} "
             f"layer{'s' if n_layers != 1 else ''}..."
         )
+
+    if not categorical and len(layers_dict) > 1:
+        # One layer in memory at a time; byte-identical to the all-layer path.
+        _tile_layered(
+            layers_dict.items(), output, tile_format=tile_format,
+            min_zoom=min_zoom, max_zoom=max_zoom, base_zoom=base_zoom,
+            drop_rate=drop_rate, cluster_distance=cluster_distance,
+            cluster_maxzoom=cluster_maxzoom, coalesce=coalesce,
+            simplification=simplification, generate_ids=generate_ids, quiet=quiet,
+            gzip_level=gzip_level,
+        )
+        if not quiet:
+            print(f"Created {output} ({_format_size(output.stat().st_size)})")
+        return output
 
     # Preprocess each layer
     rust_layers = []
@@ -265,6 +290,7 @@ def freestile(
             cluster_distance=cluster_distance if cluster_distance is not None else -1.0,
             cluster_maxzoom=cluster_maxzoom if cluster_maxzoom is not None else -1,
             do_coalesce=coalesce,
+            gzip_level=gzip_level,
         )
 
     if not quiet:
@@ -272,6 +298,127 @@ def freestile(
         print(f"Created {output} ({_format_size(size)})")
 
     return output
+
+
+LayerSource = Union[
+    gpd.GeoDataFrame, FreestileLayer, str, os.PathLike,
+    Callable[[], Union[gpd.GeoDataFrame, FreestileLayer]],
+]
+
+
+def freestile_layers(
+    layers: Union[Mapping[str, LayerSource], Iterable[Tuple[str, LayerSource]]],
+    output: Union[str, Path],
+    *,
+    tile_format: str = "mvt",
+    min_zoom: int = 0,
+    max_zoom: int = 14,
+    base_zoom: int | None = None,
+    drop_rate: float | None = None,
+    cluster_distance: float | None = None,
+    cluster_maxzoom: int | None = None,
+    coalesce: bool = False,
+    simplification: bool = True,
+    generate_ids: bool = True,
+    overwrite: bool = True,
+    quiet: bool = False,
+    gzip_level: int | None = None,
+) -> Path:
+    """Create a multi-layer PMTiles archive holding one layer in memory at a time.
+
+    Each layer is loaded, tiled, spooled to a temporary file and released
+    before the next one is loaded, so peak memory follows the largest layer
+    instead of the sum of all layers. The archive is byte-identical to
+    ``freestile()`` given the same layers in the same order.
+
+    Parameters
+    ----------
+    layers : mapping or iterable of (name, source) pairs
+        Layer names with their sources, in output order. A source is a
+        GeoDataFrame, a ``FreestileLayer``, a path to a GeoParquet file (read
+        with ``geopandas.read_parquet`` when its turn comes), or a
+        zero-argument callable returning a GeoDataFrame or ``FreestileLayer``.
+        A generator of pairs keeps even the Python side to one layer at a time.
+    output : str or Path
+        Output path for the .pmtiles file.
+
+    The remaining options, including ``gzip_level``, have the same meaning
+    as in ``freestile()``.
+    Categorical clustering is not available here.
+
+    Returns
+    -------
+    Path
+        The output file path.
+    """
+    if tile_format not in ("mlt", "mvt"):
+        raise ValueError(f"tile_format must be 'mlt' or 'mvt', got '{tile_format}'")
+    if gzip_level is not None:
+        gzip_level = _check_gzip_level(gzip_level)
+    output = Path(output).resolve()
+    if output.exists() and not overwrite:
+        raise FileExistsError(
+            f"Output file already exists: {output}. Set overwrite=True to replace."
+        )
+    pairs = layers.items() if isinstance(layers, Mapping) else layers
+    _tile_layered(
+        pairs, output, tile_format=tile_format, min_zoom=min_zoom,
+        max_zoom=max_zoom, base_zoom=base_zoom, drop_rate=drop_rate,
+        cluster_distance=cluster_distance, cluster_maxzoom=cluster_maxzoom,
+        coalesce=coalesce, simplification=simplification,
+        generate_ids=generate_ids, quiet=quiet, gzip_level=gzip_level,
+    )
+    if not quiet:
+        print(f"Created {output} ({_format_size(output.stat().st_size)})")
+    return output
+
+
+def _check_gzip_level(gzip_level) -> int:
+    integer = isinstance(gzip_level, (int, np.integer)) and not isinstance(gzip_level, bool)
+    if not integer or not 0 <= gzip_level <= 9:
+        raise ValueError("gzip_level must be an integer from 0 to 9")
+    return int(gzip_level)
+
+
+def _tile_layered(pairs, output: Path, *, tile_format, min_zoom, max_zoom,
+                  base_zoom, drop_rate, cluster_distance, cluster_maxzoom,
+                  coalesce, simplification, generate_ids, quiet,
+                  gzip_level=None) -> None:
+    tiler = _LayeredTiler(
+        tile_format, min_zoom, max_zoom,
+        base_zoom if base_zoom is not None else -1,
+        simplification, generate_ids, quiet,
+        drop_rate if drop_rate is not None else -1.0,
+        cluster_distance if cluster_distance is not None else -1.0,
+        cluster_maxzoom if cluster_maxzoom is not None else -1,
+        coalesce,
+        gzip_level,
+    )
+    seen = set()
+    for name, source in pairs:
+        if not isinstance(name, str) or not name:
+            raise ValueError("layer names must be nonempty strings")
+        if name in seen:
+            raise ValueError(f"duplicate layer name '{name}'")
+        seen.add(name)
+        if callable(source) and not isinstance(source, gpd.GeoDataFrame):
+            source = source()
+        if isinstance(source, (str, os.PathLike)):
+            source = gpd.read_parquet(source)
+        if isinstance(source, FreestileLayer):
+            gdf = source.input
+            layer_min = source.min_zoom if source.min_zoom is not None else min_zoom
+            layer_max = source.max_zoom if source.max_zoom is not None else max_zoom
+        else:
+            gdf, layer_min, layer_max = source, min_zoom, max_zoom
+        source = None
+        layer_data = _preprocess_layer(gdf, name, layer_min, layer_max, quiet)
+        gdf = None
+        tiler.add_layer(layer_data)
+        layer_data = None
+    if not seen:
+        raise ValueError("at least one layer is required")
+    tiler.finish(str(output))
 
 
 def _preprocess_layer(
@@ -738,6 +885,7 @@ __all__ = [
     "freestile_file",
     "freestile_h3",
     "freestile_layer",
+    "freestile_layers",
     "freestile_query",
     "FreestileLayer",
 ]

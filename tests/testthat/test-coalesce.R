@@ -109,3 +109,34 @@ test_that("all features combined: drop + cluster + coalesce", {
   expect_true(file.exists(output))
   expect_true(file.info(output)$size > 0)
 })
+
+test_that("coalesce output is identical from run to run", {
+  skip_on_cran()
+  skip_if_not_installed("sf")
+
+  nc <- sf::st_read(
+    system.file("shape/nc.shp", package = "sf"),
+    quiet = TRUE
+  )
+  # Few distinct values, so most tiles hold several coalesced groups.
+  nc <- sf::st_sf(class = nc$SID74 %% 3, geometry = sf::st_geometry(nc))
+
+  outputs <- replicate(2, tempfile(fileext = ".pmtiles"))
+  on.exit(unlink(outputs), add = TRUE)
+
+  for (output in outputs) {
+    freestile(
+      nc,
+      output,
+      layer_name = "counties",
+      tile_format = "mvt",
+      min_zoom = 0,
+      max_zoom = 7,
+      coalesce = TRUE,
+      quiet = TRUE
+    )
+  }
+
+  read_all <- function(path) readBin(path, "raw", file.info(path)$size)
+  expect_identical(read_all(outputs[[1]]), read_all(outputs[[2]]))
+})
