@@ -1,0 +1,1879 @@
+/**
+ * Legend Interactivity Module for mapgl
+ * Shared functionality for both Mapbox GL and MapLibre GL
+ *
+ * Provides interactive legend capabilities:
+ * - Categorical legends: Click to toggle category visibility
+ * - Continuous legends: Dual-handle range slider for filtering
+ */
+
+/**
+ * Main initialization function - called from widget code
+ * @param {Object} map - The map instance (mapboxgl or maplibre)
+ * @param {string} mapId - The container ID for the map
+ * @param {Object} config - Configuration from R side
+ */
+function initializeLegendInteractivity(map, mapId, config) {
+    var legendElement = document.getElementById(config.legendId);
+    if (!legendElement) {
+        console.warn("Legend element not found:", config.legendId);
+        return;
+    }
+
+    // Ensure layer state tracking exists via the shared helper that the
+    // main binding files install on window. Falls back to a local init if
+    // the helper isn't available (e.g. legacy load order), keeping the
+    // interactiveFilters field the legend UI depends on.
+    var layerState;
+    if (typeof window._mapglEnsureLayerState === "function") {
+        layerState = window._mapglEnsureLayerState(map);
+    } else {
+        if (!window._mapglLayerState) window._mapglLayerState = {};
+        if (!window._mapglLayerState[mapId]) {
+            window._mapglLayerState[mapId] = {
+                filters: {},
+                paintProperties: {},
+                layoutProperties: {},
+                tooltips: {},
+                popups: {},
+                legends: {},
+                interactiveFilters: {},
+                filterStack: {}
+            };
+        }
+        layerState = window._mapglLayerState[mapId];
+        if (!layerState.interactiveFilters) layerState.interactiveFilters = {};
+        if (!layerState.filterStack) layerState.filterStack = {};
+    }
+
+    // Normalize layerId to array for multi-layer support
+    var layerIds = Array.isArray(config.layerId) ? config.layerId : [config.layerId];
+
+    // Defer if style isn't loaded or any specified layer doesn't exist yet
+    // (handles race conditions in Shiny where layers are added via proxy)
+    var allLayersExist = map.isStyleLoaded() && layerIds.every(function(lid) {
+        return !lid || map.getLayer(lid);
+    });
+    if (!allLayersExist) {
+        var retryCount = config._retryCount || 0;
+        if (retryCount < 10) {
+            config._retryCount = retryCount + 1;
+            map.once('idle', function() {
+                initializeLegendInteractivity(map, mapId, config);
+            });
+        } else {
+            console.warn(
+                "Legend interactivity: not all layers found after retries. " +
+                "Missing layers for legend: " + config.legendId
+            );
+        }
+        return;
+    }
+
+    // Initialize interactive filter state for each layer
+    layerIds.forEach(function(lid) {
+        if (lid && !layerState.interactiveFilters[lid]) {
+            var originalFilter = null;
+            try {
+                originalFilter = map.getFilter(lid);
+            } catch (e) {
+                // Layer may not exist yet
+            }
+            layerState.interactiveFilters[lid] = {
+                originalFilter: originalFilter,
+                legendFilters: {}
+            };
+        }
+    });
+
+    var filterEnabled = config.filter !== false;
+
+    // Determine filter/color columns - use provided or auto-detect from first available layer
+    var filterColumn = config.filterColumn;
+    var colorColumn = config.colorColumn || filterColumn;
+    if (!filterColumn && (filterEnabled || config.rampPicker)) {
+        for (var i = 0; i < layerIds.length; i++) {
+            filterColumn = detectFilterColumn(map, layerIds[i]);
+            if (filterColumn) break;
+        }
+    }
+    if (!colorColumn) {
+        colorColumn = filterColumn;
+    }
+
+    if (filterEnabled && !filterColumn) {
+        console.warn(
+            "Could not determine filter column for interactive legend. " +
+                "Please provide filter_column parameter."
+        );
+        return;
+    }
+    if (config.rampPicker && !colorColumn) {
+        console.warn(
+            "Could not determine color column for ramp picker. " +
+                "Please provide color_column parameter."
+        );
+        return;
+    }
+
+    // Store normalized layerIds in config for use by init functions
+    config._layerIds = layerIds;
+
+    // Store config for later reference
+    legendElement._interactivityConfig = {
+        legendId: config.legendId,
+        layerIds: layerIds,
+        type: config.type,
+        values: config.values,
+        colors: config.colors,
+        filterColumn: filterColumn,
+        colorColumn: colorColumn,
+        mapId: mapId
+    };
+
+    if (config.type === "categorical" && filterEnabled) {
+        initCategoricalLegend(map, mapId, legendElement, filterColumn, config);
+    } else if (config.type === "continuous") {
+        if (filterEnabled) {
+            initContinuousLegend(map, mapId, legendElement, filterColumn, config);
+        }
+        if (config.rampPicker) {
+            initColorRampPicker(map, mapId, legendElement, colorColumn, config);
+        }
+    }
+}
+
+/**
+ * Detect filter column from layer's paint expression
+ * @param {Object} map - The map instance
+ * @param {string} layerId - The layer ID
+ * @returns {string|null} The detected column name or null
+ */
+function detectFilterColumn(map, layerId) {
+    var layer = null;
+    try {
+        layer = map.getLayer(layerId);
+    } catch (e) {
+        return null;
+    }
+    if (!layer) return null;
+
+    // Check common paint properties for expressions
+    var paintProps = [
+        "fill-color",
+        "circle-color",
+        "line-color",
+        "fill-opacity",
+        "circle-radius",
+        "line-width",
+        "fill-extrusion-color"
+    ];
+
+    for (var i = 0; i < paintProps.length; i++) {
+        var prop = paintProps[i];
+        try {
+            var paintValue = map.getPaintProperty(layerId, prop);
+            if (paintValue && Array.isArray(paintValue)) {
+                var column = parseExpressionForColumn(paintValue);
+                if (column) return column;
+            }
+        } catch (e) {
+            // Property may not exist for this layer type
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Parse expression to extract column name
+ * Handles: match, interpolate, step, case expressions
+ * @param {Array} expr - The expression array
+ * @returns {string|null} The column name or null
+ */
+function parseExpressionForColumn(expr) {
+    if (!Array.isArray(expr) || expr.length < 2) return null;
+
+    var type = expr[0];
+
+    // match: ["match", ["get", "column"], ...]
+    if (type === "match" && Array.isArray(expr[1])) {
+        if (expr[1][0] === "get" && typeof expr[1][1] === "string") {
+            return expr[1][1];
+        }
+    }
+
+    // interpolate: ["interpolate", ["linear"], ["get", "column"], ...]
+    if (type === "interpolate" && expr.length >= 3) {
+        var getExpr = expr[2];
+        if (Array.isArray(getExpr) && getExpr[0] === "get") {
+            return getExpr[1];
+        }
+    }
+
+    // step: ["step", ["get", "column"], base, ...]
+    if (type === "step" && Array.isArray(expr[1])) {
+        if (expr[1][0] === "get" && typeof expr[1][1] === "string") {
+            return expr[1][1];
+        }
+    }
+
+    // case with na_color wrapper: ["case", ["==", ["get", "column"], null], na_color, inner_expr]
+    if (type === "case" && expr.length >= 4) {
+        // Check inner expression (last non-default element)
+        for (var i = 3; i < expr.length; i++) {
+            if (Array.isArray(expr[i])) {
+                var result = parseExpressionForColumn(expr[i]);
+                if (result) return result;
+            }
+        }
+    }
+
+    return null;
+}
+
+function expressionUsesColumn(expr, column) {
+    return parseExpressionForColumn(expr) === column;
+}
+
+function detectColorPaintProperty(map, layerId, column) {
+    var colorProps = [
+        "fill-color",
+        "circle-color",
+        "line-color",
+        "fill-extrusion-color"
+    ];
+    var fallback = null;
+
+    for (var i = 0; i < colorProps.length; i++) {
+        var prop = colorProps[i];
+        try {
+            var value = map.getPaintProperty(layerId, prop);
+            if (value === undefined || value === null) continue;
+            if (!fallback) fallback = prop;
+            if (Array.isArray(value) && (!column || expressionUsesColumn(value, column))) {
+                return prop;
+            }
+        } catch (e) {
+            // Paint property does not apply to this layer type.
+        }
+    }
+
+    return fallback;
+}
+
+function buildInterpolateExpression(column, values, colors, naColor) {
+    var expr = ["interpolate", ["linear"], ["get", column]];
+    for (var i = 0; i < values.length; i++) {
+        expr.push(Number(values[i]));
+        expr.push(colors[i]);
+    }
+
+    if (naColor) {
+        return ["case", ["==", ["get", column], null], naColor, expr];
+    }
+
+    return expr;
+}
+
+function setPaintPropertyPreservingHover(map, mapId, layerId, propertyName, value) {
+    var currentPaintProperty = null;
+    try {
+        currentPaintProperty = map.getPaintProperty(layerId, propertyName);
+    } catch (e) {
+        return;
+    }
+
+    if (
+        currentPaintProperty &&
+        Array.isArray(currentPaintProperty) &&
+        currentPaintProperty[0] === "case" &&
+        Array.isArray(currentPaintProperty[1]) &&
+        currentPaintProperty[1][0] === "boolean"
+    ) {
+        map.setPaintProperty(layerId, propertyName, [
+            "case",
+            currentPaintProperty[1],
+            currentPaintProperty[2],
+            value
+        ]);
+    } else {
+        map.setPaintProperty(layerId, propertyName, value);
+    }
+
+    var layerState = window._mapglLayerState && window._mapglLayerState[mapId];
+    if (layerState) {
+        if (!layerState.paintProperties[layerId]) {
+            layerState.paintProperties[layerId] = {};
+        }
+        layerState.paintProperties[layerId][propertyName] = value;
+    }
+}
+
+function gradientFromColors(colors) {
+    return "linear-gradient(to right, " + colors.join(", ") + ")";
+}
+
+function initColorRampPicker(map, mapId, legendElement, colorColumn, config) {
+    var picker = legendElement.querySelector(".mapgl-ramp-picker");
+    var gradientBar = legendElement.querySelector(".legend-gradient");
+    if (!picker || !gradientBar || !config.colorRamps) return;
+    if (picker._mapglRampPickerInitialized) return;
+    picker._mapglRampPickerInitialized = true;
+
+    var options = picker.querySelectorAll(".mapgl-ramp-picker-option");
+    var layerIds = config._layerIds;
+    var values = (config.values || []).map(Number);
+    var selectedRamp = config.selectedRamp || Object.keys(config.colorRamps)[0];
+    var colorPropertyByLayer = {};
+
+    layerIds.forEach(function(layerId) {
+        colorPropertyByLayer[layerId] =
+            config.colorProperty || detectColorPaintProperty(map, layerId, colorColumn);
+    });
+
+    function closePicker() {
+        picker.classList.remove("mapgl-ramp-picker-open");
+        gradientBar.setAttribute("aria-expanded", "false");
+    }
+
+    function openPicker() {
+        picker.classList.add("mapgl-ramp-picker-open");
+        gradientBar.setAttribute("aria-expanded", "true");
+    }
+
+    function togglePicker(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (picker.classList.contains("mapgl-ramp-picker-open")) {
+            closePicker();
+        } else {
+            openPicker();
+        }
+    }
+
+    gradientBar.addEventListener("click", togglePicker);
+    gradientBar.addEventListener("keydown", function(e) {
+        if (e.key === "Enter" || e.key === " ") {
+            togglePicker(e);
+        } else if (e.key === "Escape") {
+            closePicker();
+        }
+    });
+
+    document.addEventListener("click", function(e) {
+        if (!picker.contains(e.target) && e.target !== gradientBar) {
+            closePicker();
+        }
+    });
+
+    function applyRamp(rampName) {
+        var colors = config.colorRamps[rampName];
+        if (!colors) return;
+        selectedRamp = rampName;
+
+        var gradient = gradientFromColors(colors);
+        gradientBar.style.background = gradient;
+
+        options.forEach(function(option) {
+            option.setAttribute(
+                "data-selected",
+                String(option.getAttribute("data-ramp-name") === rampName)
+            );
+        });
+
+        layerIds.forEach(function(layerId) {
+            var propertyName = colorPropertyByLayer[layerId];
+            if (!propertyName) {
+                console.warn("No supported color paint property found for layer:", layerId);
+                return;
+            }
+            var expression = buildInterpolateExpression(
+                colorColumn,
+                values,
+                colors,
+                config.naColor || config.na_color
+            );
+            setPaintPropertyPreservingHover(map, mapId, layerId, propertyName, expression);
+        });
+
+        if (typeof HTMLWidgets !== "undefined" && HTMLWidgets.shinyMode) {
+            Shiny.setInputValue(mapId + "_legend_ramp", {
+                legendId: config.legendId,
+                layerId: layerIds.length === 1 ? layerIds[0] : layerIds,
+                column: colorColumn,
+                property: layerIds.length === 1 ? colorPropertyByLayer[layerIds[0]] : colorPropertyByLayer,
+                ramp: rampName,
+                colors: colors,
+                timestamp: Date.now()
+            });
+        }
+    }
+
+    options.forEach(function(option) {
+        option.addEventListener("click", function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            applyRamp(option.getAttribute("data-ramp-name"));
+            closePicker();
+        });
+    });
+
+    if (selectedRamp && config.colorRamps[selectedRamp]) {
+        applyRamp(selectedRamp);
+    }
+}
+
+/**
+ * Initialize categorical legend interactivity
+ */
+function initCategoricalLegend(map, mapId, legendElement, filterColumn, config) {
+    var items = legendElement.querySelectorAll(".legend-item");
+    var layerIds = config._layerIds;
+
+    // Use filterValues for actual filtering, values for display
+    var filterValues = config.filterValues || config.values;
+    var displayValues = config.values;
+    var breaks = config.breaks; // For range-based filtering (from classifications)
+
+    // Track enabled state by index (to map display values to filter values)
+    var numCategories = displayValues.length;
+    var enabledIndices = new Set();
+    for (var i = 0; i < numCategories; i++) {
+        enabledIndices.add(i);
+    }
+
+    var layerState = window._mapglLayerState[mapId];
+
+    // Store category state for each layer
+    layerIds.forEach(function(lid) {
+        var interactiveState = layerState.interactiveFilters[lid];
+        interactiveState.enabledIndices = enabledIndices;
+        interactiveState.filterValues = filterValues;
+        interactiveState.breaks = breaks;
+        interactiveState.filterColumn = filterColumn;
+    });
+
+    // Push the enabled set to the layer filters, the reset button and Shiny.
+    function applyEnabled() {
+        layerIds.forEach(function(lid) {
+            var interactiveState = layerState.interactiveFilters[lid];
+            if (breaks && breaks.length > 0) {
+                applyRangeBasedCategoricalFilter(
+                    map,
+                    mapId,
+                    lid,
+                    filterColumn,
+                    enabledIndices,
+                    breaks,
+                    interactiveState.originalFilter
+                );
+            } else {
+                applyCategoricalFilter(
+                    map,
+                    mapId,
+                    lid,
+                    filterColumn,
+                    enabledIndices,
+                    filterValues,
+                    interactiveState.originalFilter
+                );
+            }
+        });
+
+        updateResetButton(legendElement, enabledIndices.size < numCategories);
+        updateOnlyButtons();
+
+        // Send to Shiny if applicable
+        if (typeof HTMLWidgets !== "undefined" && HTMLWidgets.shinyMode) {
+            // Get enabled filter values for Shiny
+            var enabledFilterValues = [];
+            enabledIndices.forEach(function(i) {
+                enabledFilterValues.push(filterValues[i]);
+            });
+            Shiny.setInputValue(mapId + "_legend_filter", {
+                legendId: config.legendId,
+                layerId: layerIds.length === 1 ? layerIds[0] : layerIds,
+                type: "categorical",
+                column: filterColumn,
+                enabledValues: enabledFilterValues,
+                timestamp: Date.now()
+            });
+        }
+    }
+
+    function resetAll() {
+        items.forEach(function (item) {
+            item.setAttribute("data-enabled", "true");
+        });
+        enabledIndices.clear();
+        for (var i = 0; i < numCategories; i++) {
+            enabledIndices.add(i);
+        }
+
+        // Reset filter to original for all layers
+        layerIds.forEach(function(lid) {
+            // Release the legend slot from the filter registry; the composer
+            // restores base/user/slider automatically.
+            layerState.filterStack[lid] = layerState.filterStack[lid] || {};
+            layerState.filterStack[lid].legend = null;
+            if (typeof window._mapglComposeFilter === "function") {
+                window._mapglComposeFilter(map, lid);
+            } else {
+                var _is = layerState.interactiveFilters[lid];
+                if (_is && _is.originalFilter) {
+                    map.setFilter(lid, _is.originalFilter);
+                } else {
+                    map.setFilter(lid, null);
+                }
+                layerState.filters[lid] = _is ? _is.originalFilter : null;
+            }
+        });
+
+        updateResetButton(legendElement, false);
+        updateOnlyButtons();
+
+        // Send to Shiny
+        if (typeof HTMLWidgets !== "undefined" && HTMLWidgets.shinyMode) {
+            Shiny.setInputValue(mapId + "_legend_filter", {
+                legendId: config.legendId,
+                layerId: layerIds.length === 1 ? layerIds[0] : layerIds,
+                type: "categorical",
+                column: filterColumn,
+                enabledValues: filterValues.slice(),
+                timestamp: Date.now()
+            });
+        }
+    }
+
+    // Show only one category. Isolating the category that is already the
+    // only one showing brings every category back.
+    function isolate(idx) {
+        if (enabledIndices.size === 1 && enabledIndices.has(idx)) {
+            resetAll();
+            return;
+        }
+        enabledIndices.clear();
+        enabledIndices.add(idx);
+        items.forEach(function (item, i) {
+            item.setAttribute("data-enabled", String(i === idx));
+        });
+        applyEnabled();
+    }
+
+    // Optional "only" buttons (only_button = TRUE): shown on hover or keyboard focus. Their pill takes the
+    // legend's own background color so it stays readable over long labels.
+    var onlyButtons = [];
+    function updateOnlyButtons() {
+        onlyButtons.forEach(function (btn, i) {
+            if (!btn) return;
+            var alone = enabledIndices.size === 1 && enabledIndices.has(i);
+            btn.textContent = alone ? "all" : "only";
+            btn.setAttribute("title", alone
+                ? "Show all categories"
+                : "Show only " + displayValues[i] + " (or press and hold the entry)");
+        });
+    }
+    if (config.onlyButton && legendElement.setAttribute) {
+        legendElement.setAttribute("data-only-button", "true");
+    }
+    // Label colors are set on .legend-text, not the entry, so pass the label
+    // color along for the button text and the hold fill.
+    if (legendElement.style && legendElement.style.setProperty) {
+        var legendBg = solidColor(legendElement, "backgroundColor");
+        if (legendBg) legendElement.style.setProperty("--mapgl-legend-solid-bg", legendBg);
+        var label = legendElement.querySelector(".legend-text");
+        var labelColor = label && solidColor(label, "color");
+        if (labelColor) legendElement.style.setProperty("--mapgl-legend-text", labelColor);
+    }
+
+    // Press and hold an entry to show only that category; a short click
+    // still toggles it. Moving the pointer cancels the hold.
+    var HOLD_MS = 500;
+    var LATE_MS = 150;
+    var MOVE_TOLERANCE = 6;
+    // Same clock as pointer event timeStamps
+    function now() {
+        return (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+    }
+    var hold = null;
+    var suppressClick = false;
+
+    function cancelHold() {
+        if (!hold) return;
+        clearTimeout(hold.timer);
+        if (hold.item.classList) hold.item.classList.remove("legend-holding");
+        hold = null;
+    }
+
+    // Add click handlers to each item
+    items.forEach(function (item, idx) {
+        var displayValue = item.getAttribute("data-value") || String(displayValues[idx]);
+        item.setAttribute("data-value", displayValue);
+        item.setAttribute("data-index", idx);
+        item.setAttribute("data-enabled", "true");
+
+        item.addEventListener("click", function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            // The click that ends a completed hold is not a toggle.
+            if (suppressClick) {
+                suppressClick = false;
+                return;
+            }
+
+            var currentlyEnabled = item.getAttribute("data-enabled") === "true";
+            var newState = !currentlyEnabled;
+
+            item.setAttribute("data-enabled", String(newState));
+
+            // Disabled opacity/grayscale is handled by the shared CSS. Leave
+            // patch paints untouched: an SVG background colors its rectangular
+            // viewport, not its polygon/path, and corrupts hex/custom patches.
+            if (newState) {
+                enabledIndices.add(idx);
+            } else {
+                enabledIndices.delete(idx);
+            }
+
+            applyEnabled();
+        });
+
+        item.addEventListener("pointerdown", function (e) {
+            suppressClick = false;
+            if (e.pointerType === "mouse" && e.button !== 0) return;
+            if (e.target && e.target.closest && e.target.closest(".legend-only-btn")) return;
+            cancelHold();
+            var down = now();
+            hold = {
+                item: item,
+                x: e.clientX,
+                y: e.clientY,
+                down: down,
+                timer: setTimeout(function () {
+                    // A busy page can run this timer after the button was
+                    // already released. If it is running late, let the
+                    // release decide from the actual press length.
+                    if (now() - down > HOLD_MS + LATE_MS) {
+                        hold.late = true;
+                        return;
+                    }
+                    cancelHold();
+                    suppressClick = true;
+                    isolate(idx);
+                }, HOLD_MS)
+            };
+            if (item.classList) item.classList.add("legend-holding");
+        });
+        item.addEventListener("pointerup", function (e) {
+            if (hold && hold.late && hold.item === item) {
+                var held = (e.timeStamp || now()) - hold.down;
+                cancelHold();
+                if (held >= HOLD_MS) {
+                    suppressClick = true;
+                    isolate(idx);
+                }
+                return;
+            }
+            cancelHold();
+        });
+        item.addEventListener("pointermove", function (e) {
+            if (hold && Math.abs(e.clientX - hold.x) + Math.abs(e.clientY - hold.y) > MOVE_TOLERANCE) {
+                cancelHold();
+            }
+        });
+        ["pointerleave", "pointercancel"].forEach(function (type) {
+            item.addEventListener(type, cancelHold);
+        });
+        // A long press on a touch screen would otherwise open a context menu.
+        item.addEventListener("contextmenu", function (e) {
+            e.preventDefault();
+        });
+
+        var btn = null;
+        if (config.onlyButton && typeof document.createElement === "function" && typeof item.appendChild === "function") {
+            btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "legend-only-btn";
+            btn.addEventListener("click", function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                isolate(idx);
+            });
+            item.appendChild(btn);
+        }
+        onlyButtons.push(btn);
+    });
+    updateOnlyButtons();
+
+    // Add reset button
+    addResetButton(legendElement, resetAll);
+}
+
+/**
+ * A computed color with any transparency removed, or null if the element has
+ * none (used for the "only" button pill and the hold fill).
+ */
+function solidColor(el, property) {
+    if (typeof window.getComputedStyle !== "function") return null;
+    var value;
+    try {
+        value = window.getComputedStyle(el)[property];
+    } catch (e) {
+        return null;
+    }
+    var m = /rgba?\(([^)]+)\)/.exec(value || "");
+    if (!m) return null;
+    var parts = m[1].split(",").map(function (p) { return parseFloat(p); });
+    if (parts.length === 4 && parts[3] === 0) return null;
+    return "rgb(" + parts[0] + ", " + parts[1] + ", " + parts[2] + ")";
+}
+
+/**
+ * Initialize continuous legend interactivity with gradient-overlay handles
+ * Features:
+ * - Vertical line handles positioned on the gradient bar
+ * - Semi-transparent overlays on unselected regions
+ * - Draggable middle region to pan the selection
+ * - Piecewise linear interpolation for non-linear color ramps
+ */
+function initContinuousLegend(map, mapId, legendElement, filterColumn, config) {
+    var values = config.values.map(Number);
+    var minValue = Math.min.apply(null, values);
+    var maxValue = Math.max.apply(null, values);
+    var layerIds = config._layerIds;
+
+    var layerState = window._mapglLayerState[mapId];
+
+    // Store range state for each layer
+    layerIds.forEach(function(lid) {
+        var interactiveState = layerState.interactiveFilters[lid];
+        interactiveState.rangeMin = minValue;
+        interactiveState.rangeMax = maxValue;
+        interactiveState.originalMin = minValue;
+        interactiveState.originalMax = maxValue;
+        interactiveState.filterColumn = filterColumn;
+        interactiveState.values = values;
+    });
+
+    // Find the gradient bar
+    var gradientBar = legendElement.querySelector(".legend-gradient");
+    if (!gradientBar) {
+        console.warn("No gradient bar found in legend for interactive continuous legend");
+        return;
+    }
+
+    // Create the interactive overlay container
+    var overlayContainer = document.createElement("div");
+    overlayContainer.className = "legend-gradient-overlay-container";
+
+    // Create left ghost overlay (unselected region)
+    var leftOverlay = document.createElement("div");
+    leftOverlay.className = "legend-gradient-ghost legend-gradient-ghost-left";
+
+    // Create right ghost overlay (unselected region)
+    var rightOverlay = document.createElement("div");
+    rightOverlay.className = "legend-gradient-ghost legend-gradient-ghost-right";
+
+    // Create left handle (min)
+    var leftHandle = document.createElement("div");
+    leftHandle.className = "legend-gradient-handle legend-gradient-handle-left";
+    leftHandle.title = "Drag to set minimum value";
+
+    // Create right handle (max)
+    var rightHandle = document.createElement("div");
+    rightHandle.className = "legend-gradient-handle legend-gradient-handle-right";
+    rightHandle.title = "Drag to set maximum value";
+
+    // Create middle draggable region
+    var middleRegion = document.createElement("div");
+    middleRegion.className = "legend-gradient-middle";
+    middleRegion.title = "Drag to pan the selected range";
+
+    overlayContainer.appendChild(leftOverlay);
+    overlayContainer.appendChild(rightOverlay);
+    overlayContainer.appendChild(leftHandle);
+    overlayContainer.appendChild(rightHandle);
+    overlayContainer.appendChild(middleRegion);
+
+    // Insert overlay container into gradient bar's parent (positioned over gradient)
+    gradientBar.style.position = "relative";
+    gradientBar.appendChild(overlayContainer);
+
+    // Create current range display below gradient
+    var rangeDisplay = document.createElement("div");
+    rangeDisplay.className = "legend-range-display";
+    rangeDisplay.textContent = formatValue(minValue) + " — " + formatValue(maxValue);
+
+    // Insert range display after gradient, before labels
+    var labelsEl = legendElement.querySelector(".legend-labels");
+    if (labelsEl) {
+        labelsEl.parentNode.insertBefore(rangeDisplay, labelsEl);
+    } else {
+        gradientBar.parentNode.insertBefore(rangeDisplay, gradientBar.nextSibling);
+    }
+
+    // Current selection state (as percentages 0-100)
+    var selectionState = {
+        leftPercent: 0,
+        rightPercent: 100
+    };
+
+    /**
+     * Convert position percentage (0-100) to data value
+     * Uses piecewise linear interpolation for non-linear color ramps
+     */
+    function positionToValue(percent) {
+        if (values.length < 2) return values[0] || 0;
+
+        // Clamp percent
+        percent = Math.max(0, Math.min(100, percent));
+
+        var segmentCount = values.length - 1;
+        var segmentWidth = 100 / segmentCount;
+        var segmentIndex = Math.min(
+            Math.floor(percent / segmentWidth),
+            segmentCount - 1
+        );
+        var localPercent = percent - segmentIndex * segmentWidth;
+        var localFraction = localPercent / segmentWidth;
+
+        var startVal = values[segmentIndex];
+        var endVal = values[segmentIndex + 1];
+
+        return startVal + localFraction * (endVal - startVal);
+    }
+
+    /**
+     * Convert data value to position percentage (0-100)
+     * Inverse of positionToValue
+     */
+    function valueToPosition(value) {
+        if (values.length < 2) return 0;
+
+        // Find which segment this value falls in
+        for (var i = 0; i < values.length - 1; i++) {
+            var startVal = values[i];
+            var endVal = values[i + 1];
+            var minSegVal = Math.min(startVal, endVal);
+            var maxSegVal = Math.max(startVal, endVal);
+
+            if (value >= minSegVal && value <= maxSegVal) {
+                var segmentCount = values.length - 1;
+                var segmentWidth = 100 / segmentCount;
+                var localFraction = (value - startVal) / (endVal - startVal);
+                return i * segmentWidth + localFraction * segmentWidth;
+            }
+        }
+
+        // Fallback: linear interpolation across full range
+        return ((value - minValue) / (maxValue - minValue)) * 100;
+    }
+
+    /**
+     * Update visual elements based on current selection
+     */
+    function updateVisuals() {
+        var left = selectionState.leftPercent;
+        var right = selectionState.rightPercent;
+
+        // Update ghost overlays
+        leftOverlay.style.width = left + "%";
+        rightOverlay.style.left = right + "%";
+        rightOverlay.style.width = (100 - right) + "%";
+
+        // Update handles
+        leftHandle.style.left = left + "%";
+        rightHandle.style.left = right + "%";
+
+        // Update middle region
+        middleRegion.style.left = left + "%";
+        middleRegion.style.width = (right - left) + "%";
+
+        // Update range display with actual values
+        var minVal = positionToValue(left);
+        var maxVal = positionToValue(right);
+        rangeDisplay.textContent = formatValue(minVal) + " — " + formatValue(maxVal);
+    }
+
+    /**
+     * Apply filter based on current selection
+     */
+    var filterTimeout;
+    function applyFilterDebounced() {
+        clearTimeout(filterTimeout);
+        filterTimeout = setTimeout(function () {
+            var minVal = positionToValue(selectionState.leftPercent);
+            var maxVal = positionToValue(selectionState.rightPercent);
+
+            // Check if at full range (within tolerance) - if so, clear filter instead
+            // This handles cases where legend breaks are rounded but data has more precision
+            var isAtFullRange =
+                selectionState.leftPercent <= 0.5 &&
+                selectionState.rightPercent >= 99.5;
+
+            // Apply to all associated layers
+            layerIds.forEach(function(lid) {
+                var interactiveState = layerState.interactiveFilters[lid];
+                interactiveState.rangeMin = minVal;
+                interactiveState.rangeMax = maxVal;
+
+                if (isAtFullRange) {
+                    // Release the legend slot; composer restores base/user/slider.
+                    layerState.filterStack[lid] = layerState.filterStack[lid] || {};
+                    layerState.filterStack[lid].legend = null;
+                    if (typeof window._mapglComposeFilter === "function") {
+                        window._mapglComposeFilter(map, lid);
+                    } else {
+                        map.setFilter(lid, interactiveState.originalFilter);
+                        layerState.filters[lid] = interactiveState.originalFilter;
+                    }
+                } else {
+                    applyRangeFilter(
+                        map,
+                        mapId,
+                        lid,
+                        filterColumn,
+                        minVal,
+                        maxVal,
+                        interactiveState.originalFilter
+                    );
+                }
+            });
+
+            // Update reset button visibility
+            var hasFilter = !isAtFullRange;
+            updateResetButton(legendElement, hasFilter);
+
+            // Send to Shiny if applicable
+            if (typeof HTMLWidgets !== "undefined" && HTMLWidgets.shinyMode) {
+                Shiny.setInputValue(mapId + "_legend_filter", {
+                    legendId: config.legendId,
+                    layerId: layerIds.length === 1 ? layerIds[0] : layerIds,
+                    type: "continuous",
+                    column: filterColumn,
+                    range: [minVal, maxVal],
+                    timestamp: Date.now()
+                });
+            }
+        }, 50);
+    }
+
+    /**
+     * Get mouse/touch position as percentage of gradient width
+     */
+    function getPositionPercent(e) {
+        var rect = gradientBar.getBoundingClientRect();
+        var clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        var x = clientX - rect.left;
+        var percent = (x / rect.width) * 100;
+        return Math.max(0, Math.min(100, percent));
+    }
+
+    // Drag state
+    var dragState = {
+        active: false,
+        target: null, // 'left', 'right', or 'middle'
+        startX: 0,
+        startLeftPercent: 0,
+        startRightPercent: 0
+    };
+
+    /**
+     * Handle drag start
+     */
+    function onDragStart(e, target) {
+        e.preventDefault();
+        dragState.active = true;
+        dragState.target = target;
+        dragState.startX = e.touches ? e.touches[0].clientX : e.clientX;
+        dragState.startLeftPercent = selectionState.leftPercent;
+        dragState.startRightPercent = selectionState.rightPercent;
+
+        document.addEventListener("mousemove", onDragMove);
+        document.addEventListener("mouseup", onDragEnd);
+        document.addEventListener("touchmove", onDragMove);
+        document.addEventListener("touchend", onDragEnd);
+
+        // Add dragging class for visual feedback
+        overlayContainer.classList.add("dragging");
+    }
+
+    /**
+     * Handle drag movement
+     */
+    function onDragMove(e) {
+        if (!dragState.active) return;
+
+        var percent = getPositionPercent(e);
+
+        if (dragState.target === "left") {
+            // Move left handle
+            var newLeft = Math.max(
+                0,
+                Math.min(selectionState.rightPercent - 2, percent)
+            );
+            selectionState.leftPercent = newLeft;
+        } else if (dragState.target === "right") {
+            // Move right handle
+            var newRight = Math.min(
+                100,
+                Math.max(selectionState.leftPercent + 2, percent)
+            );
+            selectionState.rightPercent = newRight;
+        } else if (dragState.target === "middle") {
+            // Pan both handles together
+            var rangeWidth =
+                dragState.startRightPercent - dragState.startLeftPercent;
+            var currentX = e.touches ? e.touches[0].clientX : e.clientX;
+            var rect = gradientBar.getBoundingClientRect();
+            var deltaX = currentX - dragState.startX;
+            var deltaPct = (deltaX / rect.width) * 100;
+
+            var newLeft = dragState.startLeftPercent + deltaPct;
+            var newRight = dragState.startRightPercent + deltaPct;
+
+            // Clamp to bounds
+            if (newLeft < 0) {
+                newLeft = 0;
+                newRight = rangeWidth;
+            }
+            if (newRight > 100) {
+                newRight = 100;
+                newLeft = 100 - rangeWidth;
+            }
+
+            selectionState.leftPercent = newLeft;
+            selectionState.rightPercent = newRight;
+        }
+
+        updateVisuals();
+        // Visual preview only during drag - filter applied on drag end
+    }
+
+    /**
+     * Handle drag end - apply filter on release
+     */
+    function onDragEnd() {
+        if (!dragState.active) return;
+
+        dragState.active = false;
+        dragState.target = null;
+
+        document.removeEventListener("mousemove", onDragMove);
+        document.removeEventListener("mouseup", onDragEnd);
+        document.removeEventListener("touchmove", onDragMove);
+        document.removeEventListener("touchend", onDragEnd);
+
+        overlayContainer.classList.remove("dragging");
+
+        // Apply filter now that drag is complete
+        applyFilterDebounced();
+    }
+
+    // Attach event listeners
+    leftHandle.addEventListener("mousedown", function (e) {
+        onDragStart(e, "left");
+    });
+    leftHandle.addEventListener("touchstart", function (e) {
+        onDragStart(e, "left");
+    });
+
+    rightHandle.addEventListener("mousedown", function (e) {
+        onDragStart(e, "right");
+    });
+    rightHandle.addEventListener("touchstart", function (e) {
+        onDragStart(e, "right");
+    });
+
+    middleRegion.addEventListener("mousedown", function (e) {
+        onDragStart(e, "middle");
+    });
+    middleRegion.addEventListener("touchstart", function (e) {
+        onDragStart(e, "middle");
+    });
+
+    // Initial visual update
+    updateVisuals();
+
+    // Add reset button
+    addResetButton(legendElement, function () {
+        selectionState.leftPercent = 0;
+        selectionState.rightPercent = 100;
+        updateVisuals();
+
+        // Reset filter to original for all layers
+        layerIds.forEach(function(lid) {
+            var interactiveState = layerState.interactiveFilters[lid];
+            interactiveState.rangeMin = minValue;
+            interactiveState.rangeMax = maxValue;
+
+            // Release the legend slot; composer handles base/user/slider.
+            layerState.filterStack[lid] = layerState.filterStack[lid] || {};
+            layerState.filterStack[lid].legend = null;
+            if (typeof window._mapglComposeFilter === "function") {
+                window._mapglComposeFilter(map, lid);
+            } else {
+                if (interactiveState.originalFilter) {
+                    map.setFilter(lid, interactiveState.originalFilter);
+                } else {
+                    map.setFilter(lid, null);
+                }
+                layerState.filters[lid] = interactiveState.originalFilter;
+            }
+        });
+
+        updateResetButton(legendElement, false);
+
+        // Send to Shiny
+        if (typeof HTMLWidgets !== "undefined" && HTMLWidgets.shinyMode) {
+            Shiny.setInputValue(mapId + "_legend_filter", {
+                legendId: config.legendId,
+                layerId: layerIds.length === 1 ? layerIds[0] : layerIds,
+                type: "continuous",
+                column: filterColumn,
+                range: [minValue, maxValue],
+                timestamp: Date.now()
+            });
+        }
+    });
+}
+
+/**
+ * Apply categorical filter to layer
+ * @param enabledIndices - Set of enabled indices
+ * @param filterValues - Array of actual data values to filter on
+ */
+function applyCategoricalFilter(
+    map,
+    mapId,
+    layerId,
+    column,
+    enabledIndices,
+    filterValues,
+    originalFilter
+) {
+    var layerState = window._mapglLayerState[mapId];
+
+    var interactiveFilter;
+    if (enabledIndices.size === 0) {
+        // No categories enabled - hide all features
+        interactiveFilter = ["==", ["get", column], "__IMPOSSIBLE_VALUE__"];
+    } else {
+        // Build array of enabled filter values - preserve original types
+        var enabledValues = [];
+        enabledIndices.forEach(function(i) {
+            if (filterValues[i] !== undefined) {
+                // Don't convert to String - preserve numeric types for proper matching
+                enabledValues.push(filterValues[i]);
+            }
+        });
+
+        // Create "match" filter for enabled categories
+        // Format: ["match", ["get", column], [values], true, false]
+        interactiveFilter = [
+            "match",
+            ["get", column],
+            enabledValues,
+            true,
+            false
+        ];
+    }
+
+    // Write to the legend slot of the filter registry; the composer
+    // handles merging with base/user/slider slots.
+    layerState.filterStack[layerId] = layerState.filterStack[layerId] || {};
+    layerState.filterStack[layerId].legend = interactiveFilter || null;
+    if (typeof window._mapglComposeFilter === "function") {
+        window._mapglComposeFilter(map, layerId);
+    } else {
+        var finalFilter = combineFilters(originalFilter, interactiveFilter);
+        map.setFilter(layerId, finalFilter);
+        layerState.filters[layerId] = finalFilter;
+    }
+}
+
+/**
+ * Apply range-based categorical filter (for binned/quantile classifications)
+ * @param enabledIndices - Set of enabled bin indices
+ * @param breaks - Array of break values [min, break1, break2, ..., max]
+ */
+function applyRangeBasedCategoricalFilter(
+    map,
+    mapId,
+    layerId,
+    column,
+    enabledIndices,
+    breaks,
+    originalFilter
+) {
+    var layerState = window._mapglLayerState[mapId];
+
+    // Calculate epsilon for floating-point precision and rounding issues
+    // Use a larger epsilon (0.1% of range) to account for rounded legend breaks
+    var overallMin = breaks[0];
+    var overallMax = breaks[breaks.length - 1];
+    var range = Math.abs(overallMax - overallMin);
+    var epsilon = range > 0 ? range * 0.001 : 0.001;
+
+    var interactiveFilter;
+    if (enabledIndices.size === 0) {
+        // No categories enabled - hide all features
+        interactiveFilter = ["==", ["get", column], "__IMPOSSIBLE_VALUE__"];
+    } else {
+        // Build "any" filter with range conditions for each enabled bin
+        var rangeConditions = [];
+        enabledIndices.forEach(function(i) {
+            if (i < breaks.length - 1) {
+                var minVal = breaks[i];
+                var maxVal = breaks[i + 1];
+                // Each bin: value >= min AND value < max (except last bin uses <=)
+                var isLastBin = (i === breaks.length - 2);
+                // Apply epsilon adjustment for edge values to handle floating-point precision
+                var filterMin = (i === 0) ? minVal - epsilon : minVal;
+                var filterMax = isLastBin ? maxVal + epsilon : maxVal;
+                var binCondition = [
+                    "all",
+                    [">=", ["get", column], filterMin],
+                    isLastBin ? ["<=", ["get", column], filterMax] : ["<", ["get", column], filterMax]
+                ];
+                rangeConditions.push(binCondition);
+            }
+        });
+
+        if (rangeConditions.length === 1) {
+            interactiveFilter = rangeConditions[0];
+        } else {
+            interactiveFilter = ["any"].concat(rangeConditions);
+        }
+    }
+
+    // Write to the legend slot of the filter registry; composer merges.
+    layerState.filterStack[layerId] = layerState.filterStack[layerId] || {};
+    layerState.filterStack[layerId].legend = interactiveFilter || null;
+    if (typeof window._mapglComposeFilter === "function") {
+        window._mapglComposeFilter(map, layerId);
+    } else {
+        var finalFilter = combineFilters(originalFilter, interactiveFilter);
+        map.setFilter(layerId, finalFilter);
+        layerState.filters[layerId] = finalFilter;
+    }
+}
+
+/**
+ * Apply range filter to layer
+ */
+function applyRangeFilter(
+    map,
+    mapId,
+    layerId,
+    column,
+    min,
+    max,
+    originalFilter
+) {
+    var layerState = window._mapglLayerState[mapId];
+
+    // Add epsilon to handle floating-point precision and rounding issues
+    // Use a larger epsilon (0.1% of range) to account for rounded legend breaks
+    // that may not exactly match data values
+    var range = Math.abs(max - min);
+    var epsilon = range > 0 ? range * 0.001 : 0.001;
+    var filterMin = min - epsilon;
+    var filterMax = max + epsilon;
+
+    var interactiveFilter = [
+        "all",
+        [">=", ["get", column], filterMin],
+        ["<=", ["get", column], filterMax]
+    ];
+
+    // Write to the legend slot of the filter registry; composer merges.
+    layerState.filterStack[layerId] = layerState.filterStack[layerId] || {};
+    layerState.filterStack[layerId].legend = interactiveFilter || null;
+    if (typeof window._mapglComposeFilter === "function") {
+        window._mapglComposeFilter(map, layerId);
+    } else {
+        var finalFilter = combineFilters(originalFilter, interactiveFilter);
+        map.setFilter(layerId, finalFilter);
+        layerState.filters[layerId] = finalFilter;
+    }
+}
+
+/**
+ * Combine existing filter with interactive filter
+ */
+function combineFilters(existingFilter, interactiveFilter) {
+    if (!existingFilter) {
+        return interactiveFilter;
+    }
+    // Wrap both in "all"
+    return ["all", existingFilter, interactiveFilter];
+}
+
+/**
+ * Add reset button to legend
+ */
+function addResetButton(legendElement, resetCallback) {
+    if (legendElement.querySelector(".legend-reset-btn")) return;
+
+    var resetBtn = document.createElement("button");
+    resetBtn.className = "legend-reset-btn";
+    resetBtn.textContent = "Reset Filter";
+    resetBtn.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        resetCallback();
+    });
+    legendElement.appendChild(resetBtn);
+}
+
+/**
+ * Update reset button visibility
+ */
+function updateResetButton(legendElement, show) {
+    var resetBtn = legendElement.querySelector(".legend-reset-btn");
+    if (resetBtn) {
+        resetBtn.classList.toggle("visible", show);
+    }
+}
+
+/**
+ * Format numeric value for display
+ */
+function formatValue(value) {
+    if (value === null || value === undefined || isNaN(value)) {
+        return String(value);
+    }
+    var absValue = Math.abs(value);
+    if (absValue >= 1000000) {
+        return (value / 1000000).toFixed(1) + "M";
+    } else if (absValue >= 1000) {
+        return (value / 1000).toFixed(1) + "K";
+    } else if (Number.isInteger(value)) {
+        return value.toString();
+    } else {
+        return value.toFixed(2);
+    }
+}
+
+/**
+ * Initialize draggable functionality for legends
+ * Called automatically when legends are rendered
+ * @param {HTMLElement} container - The map container element
+ */
+function initializeDraggableLegends(container) {
+    var legends = container.querySelectorAll('.mapboxgl-legend[data-draggable="true"]');
+    legends.forEach(function(legend) {
+        // Skip if already initialized
+        if (legend._draggableInitialized) return;
+        legend._draggableInitialized = true;
+
+        makeLegendDraggable(legend);
+    });
+}
+
+/**
+ * Make a single legend element draggable
+ * @param {HTMLElement} legend - The legend element
+ * @param {HTMLElement} [boundsContainer] - Container that constrains the drag.
+ *   Required for legends not nested in a map container (e.g. compare-level
+ *   legends attached to the outer compare element); defaults to the closest
+ *   map container.
+ */
+function makeLegendDraggable(legend, boundsContainer) {
+    var isDragging = false;
+    var startX, startY;
+    var startLeft, startTop;
+
+    // Add draggable class for styling
+    legend.classList.add('legend-draggable');
+
+    // Get the map container (parent of legend)
+    var mapContainer = boundsContainer ||
+        legend.closest('.mapboxgl-map, .maplibregl-map') ||
+        legend.parentElement;
+
+    function onMouseDown(e) {
+        // Don't start drag if clicking on interactive elements (including slider handles)
+        if (e.target.closest('.legend-item, .legend-reset-btn, .continuous-slider-container, .legend-gradient, .legend-gradient-handle, .legend-gradient-middle, .legend-gradient-overlay-container, .mapgl-ramp-picker, input, button')) {
+            return;
+        }
+
+        isDragging = true;
+        legend.classList.add('legend-dragging');
+        // Once the user moves a legend, automatic stacking leaves it alone
+        legend.dataset.mapglUserMoved = 'true';
+
+        startX = e.clientX;
+        startY = e.clientY;
+
+        // Get current position
+        var rect = legend.getBoundingClientRect();
+        var containerRect = mapContainer.getBoundingClientRect();
+
+        // Calculate position relative to container
+        startLeft = rect.left - containerRect.left;
+        startTop = rect.top - containerRect.top;
+
+        // Switch to absolute positioning with explicit coordinates
+        legend.style.position = 'absolute';
+        legend.style.left = startLeft + 'px';
+        legend.style.top = startTop + 'px';
+        legend.style.right = 'auto';
+        legend.style.bottom = 'auto';
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+    }
+
+    function onMouseMove(e) {
+        if (!isDragging) return;
+
+        var deltaX = e.clientX - startX;
+        var deltaY = e.clientY - startY;
+
+        var newLeft = startLeft + deltaX;
+        var newTop = startTop + deltaY;
+
+        // Constrain to container bounds
+        var containerRect = mapContainer.getBoundingClientRect();
+        var legendRect = legend.getBoundingClientRect();
+
+        var maxLeft = containerRect.width - legendRect.width;
+        var maxTop = containerRect.height - legendRect.height;
+
+        newLeft = Math.max(0, Math.min(newLeft, maxLeft));
+        newTop = Math.max(0, Math.min(newTop, maxTop));
+
+        legend.style.left = newLeft + 'px';
+        legend.style.top = newTop + 'px';
+
+        e.preventDefault();
+    }
+
+    function onMouseUp(e) {
+        if (!isDragging) return;
+
+        isDragging = false;
+        legend.classList.remove('legend-dragging');
+
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+    }
+
+    // Add touch support
+    function onTouchStart(e) {
+        if (e.touches.length !== 1) return;
+
+        var touch = e.touches[0];
+        // Don't start drag if touching interactive elements (including slider handles)
+        if (e.target.closest('.legend-item, .legend-reset-btn, .continuous-slider-container, .legend-gradient, .legend-gradient-handle, .legend-gradient-middle, .legend-gradient-overlay-container, .mapgl-ramp-picker, input, button')) {
+            return;
+        }
+
+        isDragging = true;
+        legend.classList.add('legend-dragging');
+        legend.dataset.mapglUserMoved = 'true';
+
+        startX = touch.clientX;
+        startY = touch.clientY;
+
+        var rect = legend.getBoundingClientRect();
+        var containerRect = mapContainer.getBoundingClientRect();
+
+        startLeft = rect.left - containerRect.left;
+        startTop = rect.top - containerRect.top;
+
+        legend.style.position = 'absolute';
+        legend.style.left = startLeft + 'px';
+        legend.style.top = startTop + 'px';
+        legend.style.right = 'auto';
+        legend.style.bottom = 'auto';
+
+        e.preventDefault();
+    }
+
+    function onTouchMove(e) {
+        if (!isDragging || e.touches.length !== 1) return;
+
+        var touch = e.touches[0];
+        var deltaX = touch.clientX - startX;
+        var deltaY = touch.clientY - startY;
+
+        var newLeft = startLeft + deltaX;
+        var newTop = startTop + deltaY;
+
+        var containerRect = mapContainer.getBoundingClientRect();
+        var legendRect = legend.getBoundingClientRect();
+
+        var maxLeft = containerRect.width - legendRect.width;
+        var maxTop = containerRect.height - legendRect.height;
+
+        newLeft = Math.max(0, Math.min(newLeft, maxLeft));
+        newTop = Math.max(0, Math.min(newTop, maxTop));
+
+        legend.style.left = newLeft + 'px';
+        legend.style.top = newTop + 'px';
+
+        e.preventDefault();
+    }
+
+    function onTouchEnd(e) {
+        if (!isDragging) return;
+
+        isDragging = false;
+        legend.classList.remove('legend-dragging');
+    }
+
+    legend.addEventListener('mousedown', onMouseDown);
+    legend.addEventListener('touchstart', onTouchStart, { passive: false });
+    legend.addEventListener('touchmove', onTouchMove, { passive: false });
+    legend.addEventListener('touchend', onTouchEnd);
+}
+
+/* ============================================================
+ * Collapsible legend toggle
+ *
+ * Single document-level delegated handler so this works for any
+ * legend emitted with collapsible = TRUE, regardless of how/when
+ * the legend HTML was inserted (static widget render, proxy message,
+ * compare view). Guarded so repeated script loads don't double-bind.
+ * ============================================================ */
+if (!window._mapglLegendCollapseInstalled) {
+    window._mapglLegendCollapseInstalled = true;
+
+    document.addEventListener('click', function (e) {
+        var btn = e.target.closest && e.target.closest('.mapgl-legend-collapse-btn');
+        if (!btn) return;
+        e.preventDefault();
+        e.stopPropagation();
+
+        var legend = btn.closest('.mapboxgl-legend');
+        if (!legend) return;
+
+        var nowCollapsed = legend.classList.toggle('mapgl-legend-collapsed');
+        btn.setAttribute('aria-expanded', nowCollapsed ? 'false' : 'true');
+        btn.setAttribute(
+            'aria-label',
+            nowCollapsed ? 'Expand legend' : 'Collapse legend'
+        );
+        btn.textContent = nowCollapsed ? '+' : '\u2013';
+
+        // Collapsing changes the legend's height; ask the owning legend
+        // manager (wrapper's parent) to restack its corner
+        var wrapper = legend.parentElement;
+        var owner = wrapper && wrapper.parentElement;
+        if (owner && owner._mapglLegendManager) {
+            owner._mapglLegendManager.refresh();
+        }
+    });
+}
+
+/* ============================================================
+ * Legend manager: zoom-based visibility + automatic stacking
+ *
+ * One manager per container (map container, or the outer compare
+ * element for target = "compare" legends). It holds no per-legend
+ * state: every pass re-queries the DOM, so legends injected later
+ * (Shiny proxy, style-reload restore, compare modifications) are
+ * picked up by the MutationObserver without any call-site plumbing.
+ *
+ * A manager owns exactly the legends whose wrapper div is a direct
+ * child of its container - this keeps the outer compare manager off
+ * the per-side legends owned by each map's own manager.
+ * ============================================================ */
+
+function initializeLegendManager(map, container) {
+    container = container || (map && map.getContainer && map.getContainer());
+    if (!map || !container) return null;
+
+    var existing = container._mapglLegendManager;
+    if (existing) {
+        if (existing.map === map) return existing;
+        // Widget rerender: same container, new map instance
+        existing.dispose();
+    }
+
+    var manager = { map: map, container: container, disposed: false };
+    var rafId = null;
+    var mutationObserver = null;
+    var resizeObserver = null;
+    var observedLegends = [];
+
+    var LEGEND_SELECTOR = '.mapboxgl-legend[id], .maplibregl-legend[id]';
+    var CORNERS = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
+
+    function isLegendNode(node) {
+        return (
+            node &&
+            node.nodeType === 1 &&
+            node.classList &&
+            (node.classList.contains('mapboxgl-legend') ||
+                node.classList.contains('maplibregl-legend'))
+        );
+    }
+
+    function isOwnedLegend(legend) {
+        return (
+            !!legend &&
+            !!legend.parentElement &&
+            legend.parentElement.parentElement === container
+        );
+    }
+
+    function ownedLegends() {
+        var owned = [];
+        container.querySelectorAll(LEGEND_SELECTOR).forEach(function (legend) {
+            if (isOwnedLegend(legend)) owned.push(legend);
+        });
+        return owned;
+    }
+
+    // Only legend-related mutations schedule work; GL's own DOM churn
+    // (canvas, controls, popups) is ignored
+    function isRelevantRecord(record) {
+        if (record.type === 'childList') {
+            if (record.target === container) {
+                var nodes = Array.prototype.slice
+                    .call(record.addedNodes)
+                    .concat(Array.prototype.slice.call(record.removedNodes));
+                return nodes.some(isLegendNode);
+            }
+            var root =
+                record.target.closest && record.target.closest(LEGEND_SELECTOR);
+            return !!root && isOwnedLegend(root);
+        }
+        if (record.type === 'attributes') {
+            var target = record.target;
+            return (
+                target.matches &&
+                target.matches(LEGEND_SELECTOR) &&
+                isOwnedLegend(target)
+            );
+        }
+        return false;
+    }
+
+    function observe() {
+        mutationObserver.observe(container, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['style', 'class'],
+        });
+    }
+
+    // Run the manager's own DOM writes without re-triggering the observer;
+    // reconnect synchronously so external changes are never missed
+    function suppress(fn) {
+        if (!mutationObserver) {
+            fn();
+            return;
+        }
+        mutationObserver.disconnect();
+        try {
+            fn();
+        } finally {
+            observe();
+        }
+    }
+
+    function updateZoomVisibility(legends) {
+        var zoom = map.getZoom();
+        var changed = false;
+        legends.forEach(function (legend) {
+            var minZoom = legend.getAttribute('data-min-zoom');
+            var maxZoom = legend.getAttribute('data-max-zoom');
+            if (minZoom === null && maxZoom === null) return;
+            // Same semantics as layer min_zoom/max_zoom: visible when
+            // zoom >= min (inclusive) and zoom < max (exclusive)
+            var visible =
+                (minZoom === null || zoom >= parseFloat(minZoom)) &&
+                (maxZoom === null || zoom < parseFloat(maxZoom));
+            var hidden = legend.classList.contains('mapgl-legend-zoom-hidden');
+            if (visible !== hidden) return;
+            legend.classList.toggle('mapgl-legend-zoom-hidden', !visible);
+            changed = true;
+        });
+        return changed;
+    }
+
+    // Distance from the container's bottom edge to the top of the map's own controls in a bottom corner
+    // (the Mapbox logo, the attribution, a scale bar), so legends can sit above them instead of covering them
+    function cornerControlsHeight(corner, containerRect) {
+        var nodes = container.querySelectorAll(
+            '.mapboxgl-ctrl-' + corner + ', .maplibregl-ctrl-' + corner
+        );
+        var h = 0;
+        for (var i = 0; i < nodes.length; i++) {
+            var r = nodes[i].getBoundingClientRect();
+            if (r.height > 0 && r.width > 0) {
+                h = Math.max(h, containerRect.bottom - r.top);
+            }
+        }
+        return h;
+    }
+
+    function repositionLegends(legends) {
+        var containerRect = container.getBoundingClientRect();
+        var groups = {};
+        legends.forEach(function (legend) {
+            if (legend.classList.contains('mapgl-legend-zoom-hidden')) return;
+            if (legend.dataset.mapglUserMoved === 'true') return;
+            if (window.getComputedStyle(legend).display === 'none') return;
+            for (var i = 0; i < CORNERS.length; i++) {
+                if (legend.classList.contains(CORNERS[i])) {
+                    (groups[CORNERS[i]] = groups[CORNERS[i]] || []).push(legend);
+                    break;
+                }
+            }
+        });
+        Object.keys(groups).forEach(function (corner) {
+            // A legend with explicit margin_* values stays exactly where it was placed. If it is the
+            // first legend in its corner it also anchors that corner's stack; otherwise it is left out.
+            var stack = groups[corner].filter(function (legend, i) {
+                return i === 0 || legend.dataset.manualPosition !== 'true';
+            });
+            var isTop = corner.indexOf('top') === 0;
+            var prevRect = null;
+            stack.forEach(function (legend, i) {
+                if (i === 0) {
+                    if (legend.dataset.manualPosition !== 'true') {
+                        // First legend keeps its CSS corner position, raised above the map's own
+                        // controls in a bottom corner
+                        legend.style.top = '';
+                        legend.style.bottom = '';
+                        if (!isTop) {
+                            var cssBottom = parseFloat(window.getComputedStyle(legend).bottom) || 0;
+                            var clear = cornerControlsHeight(corner, containerRect);
+                            if (clear > 0 && clear + 6 > cssBottom) {
+                                legend.style.bottom = clear + 6 + 'px';
+                            }
+                        }
+                    }
+                } else if (isTop) {
+                    // Stack downward: the element's own margin provides the gap
+                    legend.style.bottom = '';
+                    legend.style.top =
+                        prevRect.bottom - containerRect.top + 'px';
+                } else {
+                    // Stack upward from the bottom edge
+                    legend.style.top = '';
+                    legend.style.bottom =
+                        containerRect.bottom - prevRect.top + 'px';
+                }
+                prevRect = legend.getBoundingClientRect();
+            });
+        });
+    }
+
+    function refresh() {
+        rafId = null;
+        if (manager.disposed) return;
+        var legends = ownedLegends();
+
+        // Owned draggable legends get drag behavior bounded by this
+        // container (covers proxy-added, restored, and compare legends)
+        legends.forEach(function (legend) {
+            if (
+                legend.getAttribute('data-draggable') === 'true' &&
+                !legend._draggableInitialized
+            ) {
+                legend._draggableInitialized = true;
+                makeLegendDraggable(legend, container);
+            }
+        });
+
+        // Reconcile the ResizeObserver's observed set
+        if (resizeObserver) {
+            observedLegends = observedLegends.filter(function (legend) {
+                if (legends.indexOf(legend) === -1) {
+                    resizeObserver.unobserve(legend);
+                    return false;
+                }
+                return true;
+            });
+            legends.forEach(function (legend) {
+                if (observedLegends.indexOf(legend) === -1) {
+                    resizeObserver.observe(legend);
+                    observedLegends.push(legend);
+                }
+            });
+        }
+
+        suppress(function () {
+            updateZoomVisibility(legends);
+            repositionLegends(legends);
+        });
+    }
+
+    function scheduleRefresh() {
+        if (rafId !== null || manager.disposed) return;
+        rafId = requestAnimationFrame(refresh);
+    }
+
+    function onZoom() {
+        if (manager.disposed) return;
+        // Cheap class pass on every zoom frame; full relayout only when
+        // some legend's hidden state actually changed
+        var changed = false;
+        suppress(function () {
+            changed = updateZoomVisibility(ownedLegends());
+        });
+        if (changed) scheduleRefresh();
+    }
+
+    manager.refresh = scheduleRefresh;
+    manager.dispose = function () {
+        if (manager.disposed) return;
+        manager.disposed = true;
+        if (rafId !== null) {
+            cancelAnimationFrame(rafId);
+            rafId = null;
+        }
+        if (mutationObserver) mutationObserver.disconnect();
+        if (resizeObserver) resizeObserver.disconnect();
+        observedLegends = [];
+        if (map.off) {
+            map.off('zoom', onZoom);
+            map.off('remove', manager.dispose);
+        }
+        if (container._mapglLegendManager === manager) {
+            delete container._mapglLegendManager;
+        }
+    };
+
+    if (typeof MutationObserver !== 'undefined') {
+        mutationObserver = new MutationObserver(function (records) {
+            if (manager.disposed) return;
+            for (var i = 0; i < records.length; i++) {
+                if (isRelevantRecord(records[i])) {
+                    scheduleRefresh();
+                    return;
+                }
+            }
+        });
+        observe();
+    }
+    if (typeof ResizeObserver !== 'undefined') {
+        resizeObserver = new ResizeObserver(function () {
+            if (!manager.disposed) scheduleRefresh();
+        });
+    }
+
+    map.on('zoom', onZoom);
+    // Dispose as soon as the map goes away (widget rerender) so stale
+    // observers don't linger until the replacement map initializes
+    if (map.once) map.once('remove', manager.dispose);
+
+    container._mapglLegendManager = manager;
+    refresh();
+    return manager;
+}
+
+window.initializeLegendManager = initializeLegendManager;
