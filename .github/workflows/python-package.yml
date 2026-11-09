@@ -32,6 +32,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Test temporal properties and CRS-tagged geometry
         run: cargo test --locked --manifest-path src/rust/freestiler-core/Cargo.toml --features geoparquet,duckdb --test native_input
+      - name: Test reproducible coalescing
+        run: cargo test --locked --manifest-path src/rust/freestiler-core/Cargo.toml --test coalesce_order
 
   build-wheels:
     name: Build Wheel (${{ matrix.os }}, py${{ matrix.python-version }})

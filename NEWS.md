@@ -7,6 +7,10 @@
   without GeoParquet or DuckDB support, including in the CRAN build. Existing
   calls without category options retain their clustering behavior.
 
+* `coalesce = TRUE` now produces the same archive on every run. Coalesced
+  groups were emitted in hash-map order, which changes from run to run; they
+  now keep the order in which their first feature appears in the tile.
+
 # freestiler 0.3.0
 
 * MVT output with `simplification = FALSE` now preserves line positions when
