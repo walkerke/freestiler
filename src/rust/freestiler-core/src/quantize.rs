@@ -7,6 +7,9 @@
 //! rounding so both encoders get the same guarantees:
 //!
 //! - Consecutive duplicate vertices are removed.
+//! - Collinear backtracking is removed without changing signed fill area.
+//! - The encoders split repeated-vertex pinches into polygon parts under the
+//!   same feature identity, including consistent MLT topology/type streams.
 //! - Zero-area interior rings are dropped.
 //! - Ring winding is normalized to the MVT convention (exterior rings have
 //!   positive signed area by the surveyor's formula in y-down tile
@@ -15,7 +18,9 @@
 //!   one-pixel square at its centroid instead of being dropped, so thin
 //!   features stay continuously visible across zoom levels.
 
+use geo::Contains;
 use geo_types::{LineString, MultiPolygon, Polygon};
+use std::collections::HashSet;
 
 /// Tile coordinate extent (pixels per tile side)
 pub const EXTENT: u32 = 4096;
@@ -101,16 +106,113 @@ pub fn quantize_multipolygon(
     let mut seen_dots: Vec<(i32, i32)> = Vec::new();
     let mut out = Vec::with_capacity(mp.0.len());
     for poly in &mp.0 {
-        let qp = quantize_polygon_or_dot(poly, west, south, east, north);
-        if let Some(center) = qp.dot_center() {
-            if seen_dots.contains(&center) {
-                continue;
+        for qp in quantize_polygon(poly, west, south, east, north) {
+            if let Some(center) = qp.dot_center() {
+                if seen_dots.contains(&center) {
+                    continue;
+                }
+                seen_dots.push(center);
             }
-            seen_dots.push(center);
+            out.push(qp);
         }
-        out.push(qp);
     }
     out
+}
+
+/// Quantize a polygon, splitting vertex pinches created by rounding into
+/// separate polygon parts. All parts still belong to the same tile feature.
+/// The common simple-ring path does not invoke an overlay or reorder vertices.
+pub fn quantize_polygon(
+    poly: &Polygon<f64>,
+    west: f64,
+    south: f64,
+    east: f64,
+    north: f64,
+) -> Vec<QuantPolygon> {
+    normalize_vertex_pinches(quantize_polygon_or_dot(poly, west, south, east, north))
+}
+
+fn normalize_vertex_pinches(qp: QuantPolygon) -> Vec<QuantPolygon> {
+    fn split(ring: &[(i32, i32)], out: &mut Vec<Vec<(i32, i32)>>) {
+        let mut pending = vec![ring.to_vec()];
+        while let Some(ring) = pending.pop() {
+            let mut seen = std::collections::HashMap::with_capacity(ring.len());
+            let pinch = ring
+                .iter()
+                .enumerate()
+                .find_map(|(j, p)| seen.insert(*p, j).map(|i| (i, j)));
+            if let Some((i, j)) = pinch {
+                pending.push(ring[j..].iter().chain(&ring[..i]).copied().collect());
+                pending.push(ring[i..j].to_vec());
+            } else if ring.len() >= 3 && signed_area2(&ring) != 0 {
+                out.push(ring);
+            }
+        }
+    }
+    let repeated = |ring: &[(i32, i32)]| {
+        if ring.len() <= 16 {
+            return ring.iter().enumerate().any(|(i, p)| ring[..i].contains(p));
+        }
+        let mut seen = HashSet::with_capacity(ring.len());
+        ring.iter().any(|p| !seen.insert(*p))
+    };
+    if !repeated(&qp.exterior) && !qp.interiors.iter().any(|r| repeated(r)) {
+        return vec![qp];
+    }
+    // Split only at existing integer vertices. No overlay adapter, fractional
+    // intersections, extra snapping, new pixels or source-coordinate repair.
+    let mut cycles = Vec::new();
+    split(&qp.exterior, &mut cycles);
+    for hole in &qp.interiors {
+        split(hole, &mut cycles);
+    }
+    let mut parts: Vec<_> = cycles
+        .iter()
+        .filter(|r| signed_area2(r) > 0)
+        .map(|r| QuantPolygon {
+            exterior: r.clone(),
+            interiors: Vec::new(),
+        })
+        .collect();
+    for hole in cycles.iter().filter(|r| signed_area2(r) < 0) {
+        // A hole may share its first (pinch) vertex with its shell, so inspect
+        // all vertices and assign to the smallest containing exterior.
+        let owner = parts
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| {
+                let shell = Polygon::new(
+                    p.exterior
+                        .iter()
+                        .map(|&(x, y)| (f64::from(x), f64::from(y)))
+                        .collect(),
+                    Vec::new(),
+                );
+                hole.iter().any(|&(x, y)| {
+                    shell.contains(&geo_types::Point::new(f64::from(x), f64::from(y)))
+                })
+            })
+            .min_by_key(|(_, p)| signed_area2(&p.exterior))
+            .map(|(i, _)| i);
+        let Some(owner) = owner else {
+            return vec![qp];
+        };
+        parts[owner].interiors.push(hole.clone());
+    }
+    let original =
+        signed_area2(&qp.exterior) + qp.interiors.iter().map(|r| signed_area2(r)).sum::<i64>();
+    let normalized = parts
+        .iter()
+        .map(|p| {
+            signed_area2(&p.exterior) + p.interiors.iter().map(|r| signed_area2(r)).sum::<i64>()
+        })
+        .sum::<i64>();
+    // Retain unexpected cases visibly rather than silently dropping fill.
+    if parts.is_empty() || original != normalized {
+        vec![qp]
+    } else {
+        parts
+    }
 }
 
 impl QuantPolygon {
@@ -176,8 +278,8 @@ fn quantize_ring(
     coords
 }
 
-/// Iteratively remove spikes: vertices whose cyclic neighbors coincide, i.e.
-/// the ring walks out to a point and retraces itself (`A -> B -> A`).
+/// Iteratively remove spikes: a collinear direction reversal, including partial
+/// retracing (`A -> B -> C`) as well as equal-neighbor spikes (`A -> B -> A`).
 /// Quantization commonly creates these from narrow appendages, and they make
 /// the ring self-intersecting. Removing a spike tip leaves a consecutive
 /// duplicate pair, which is deduplicated before re-scanning; multi-vertex
@@ -190,7 +292,18 @@ fn remove_spikes(coords: &mut Vec<(i32, i32)>) {
             return;
         }
         let n = coords.len();
-        let spike = (0..n).find(|&i| coords[(i + n - 1) % n] == coords[(i + 1) % n]);
+        let spike = (0..n).find(|&i| {
+            let (ax, ay) = coords[(i + n - 1) % n];
+            let (bx, by) = coords[i];
+            let (cx, cy) = coords[(i + 1) % n];
+            // Includes partial retracing A->B->C where B lies beyond C.
+            // Keep ordinary forward collinear vertices unchanged.
+            let ux = i128::from(bx) - i128::from(ax);
+            let uy = i128::from(by) - i128::from(ay);
+            let vx = i128::from(cx) - i128::from(bx);
+            let vy = i128::from(cy) - i128::from(by);
+            ux * vy == uy * vx && ux * vx + uy * vy < 0
+        });
         let Some(tip) = spike else {
             return;
         };
@@ -245,6 +358,144 @@ fn ring_center(coords: &[(i32, i32)]) -> (i32, i32) {
 mod tests {
     use super::*;
     use geo_types::{polygon, Coord};
+
+    #[test]
+    fn partial_backtracking_removes_only_zero_area_excursion() {
+        let mut ring = vec![(737, 4106), (736, 4106), (735, 4107), (735, 4106)];
+        let area = signed_area2(&ring);
+        remove_spikes(&mut ring);
+        assert_eq!(signed_area2(&ring), area);
+        assert_eq!(ring.len(), 3);
+        assert!(!ring.contains(&(737, 4106)));
+        let mut forward = vec![(0, 0), (1, 0), (2, 0), (2, 2), (0, 2)];
+        let original = forward.clone();
+        remove_spikes(&mut forward);
+        assert_eq!(forward, original);
+    }
+
+    #[test]
+    fn pinched_lobes_split_without_losing_area_or_holes() {
+        let qp = QuantPolygon {
+            exterior: vec![
+                (0, 0),
+                (10, 0),
+                (10, 10),
+                (20, 10),
+                (20, 20),
+                (10, 20),
+                (10, 10),
+                (0, 10),
+            ],
+            interiors: vec![vec![(2, 2), (2, 4), (4, 4), (4, 2)]],
+        };
+        let area = signed_area2(&qp.exterior) + signed_area2(&qp.interiors[0]);
+        let parts = normalize_vertex_pinches(qp);
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts.iter().map(|p| p.interiors.len()).sum::<usize>(), 1);
+        assert_eq!(
+            parts
+                .iter()
+                .map(|p| signed_area2(&p.exterior)
+                    + p.interiors.iter().map(|r| signed_area2(r)).sum::<i64>())
+                .sum::<i64>(),
+            area
+        );
+        for p in &parts {
+            assert!(signed_area2(&p.exterior) > 0);
+            assert_eq!(
+                p.exterior.iter().collect::<HashSet<_>>().len(),
+                p.exterior.len()
+            );
+            assert!(p.interiors.iter().all(|r| signed_area2(r) < 0));
+        }
+        assert_eq!(
+            normalize_vertex_pinches(parts[0].clone()),
+            vec![parts[0].clone()]
+        );
+    }
+
+    #[test]
+    fn backtracking_handles_negative_and_extreme_integer_coordinates() {
+        for shift in [-4106, 0, 4106] {
+            let mut r = vec![
+                (1, shift),
+                (3, shift),
+                (2, shift),
+                (2, shift + 2),
+                (1, shift + 2),
+            ];
+            let area = signed_area2(&r);
+            remove_spikes(&mut r);
+            assert_eq!(signed_area2(&r), area);
+            assert_eq!(r.len(), 4);
+        }
+        let mut r = vec![(i32::MIN, 0), (i32::MAX, 0), (0, 0), (0, 1), (i32::MIN, 1)];
+        remove_spikes(&mut r);
+        assert_eq!(r.len(), 4);
+    }
+
+    #[test]
+    fn pinched_exterior_exposes_same_unfilled_area_as_a_hole() {
+        let qp = QuantPolygon {
+            exterior: vec![
+                (0, 0),
+                (10, 0),
+                (10, 10),
+                (0, 10),
+                (0, 0),
+                (2, 2),
+                (2, 4),
+                (4, 4),
+                (4, 2),
+                (2, 2),
+            ],
+            interiors: vec![],
+        };
+        let original = signed_area2(&qp.exterior);
+        let parts = normalize_vertex_pinches(qp);
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].interiors.len(), 1);
+        assert_eq!(
+            signed_area2(&parts[0].exterior) + signed_area2(&parts[0].interiors[0]),
+            original
+        );
+    }
+
+    #[test]
+    fn unassignable_hole_is_retained_visibly_instead_of_dropped() {
+        let qp = QuantPolygon {
+            exterior: vec![
+                (0, 0),
+                (10, 0),
+                (10, 10),
+                (20, 10),
+                (20, 20),
+                (10, 20),
+                (10, 10),
+                (0, 10),
+            ],
+            interiors: vec![vec![(30, 30), (30, 32), (32, 32), (32, 30)]],
+        };
+        assert_eq!(normalize_vertex_pinches(qp.clone()), vec![qp]);
+    }
+
+    #[test]
+    fn partial_spike_cleanup_is_cyclic_and_winding_independent() {
+        let original = vec![(1, -2), (3, -2), (2, -2), (2, 0), (1, 0)];
+        for offset in 0..original.len() {
+            for reverse in [false, true] {
+                let mut r = original.clone();
+                r.rotate_left(offset);
+                if reverse {
+                    r.reverse();
+                }
+                let area = signed_area2(&r);
+                remove_spikes(&mut r);
+                assert_eq!(r.len(), 4);
+                assert_eq!(signed_area2(&r), area);
+            }
+        }
+    }
 
     const W: f64 = 0.0;
     const S: f64 = 0.0;

@@ -2,8 +2,7 @@ use integer_encoding::VarInt;
 use std::collections::HashMap;
 
 use crate::quantize::{
-    lat_to_tile_coord, lon_to_tile_coord, quantize_multipolygon, quantize_polygon_or_dot,
-    QuantPolygon,
+    lat_to_tile_coord, lon_to_tile_coord, quantize_multipolygon, quantize_polygon, QuantPolygon,
 };
 use crate::tiler::{tile_bounds, Feature, Geometry, PropertyValue, TileCoord};
 
@@ -285,10 +284,26 @@ pub fn encode_tile(
 
     // --- Geometry streams ---
     // Write geometry stream count before the streams (spec requirement)
-    let geom_stream_count = count_geometry_streams(features);
+    let quantized: Vec<Option<Vec<QuantPolygon>>> = features
+        .iter()
+        .map(|f| match &f.geometry {
+            Geometry::Polygon(p) => Some(quantize_polygon(p, west, south, east, north)),
+            Geometry::MultiPolygon(p) => Some(quantize_multipolygon(p, west, south, east, north)),
+            _ => None,
+        })
+        .collect();
+    let geom_stream_count = count_geometry_streams(features, &quantized);
     write_varint_usize(&mut layer_data, geom_stream_count);
 
-    encode_geometry_streams(&mut layer_data, features, west, south, east, north);
+    encode_geometry_streams(
+        &mut layer_data,
+        features,
+        &quantized,
+        west,
+        south,
+        east,
+        north,
+    );
 
     // --- Property streams ---
     for (i, _name) in property_names.iter().enumerate() {
@@ -388,12 +403,15 @@ fn infer_column_type(features: &[Feature], prop_idx: usize) -> u8 {
 /// Count the number of geometry streams that will be written.
 /// Always: geom_type_stream (1) + vertex_stream (1) = 2
 /// Plus: num_geometries if any multi-types, num_parts if any lines/polys, num_rings if any polys
-fn count_geometry_streams(features: &[Feature]) -> usize {
+fn count_geometry_streams(features: &[Feature], quantized: &[Option<Vec<QuantPolygon>>]) -> usize {
     let mut has_multi = false;
     let mut has_parts = false;
     let mut has_rings = false;
 
-    for f in features {
+    for (f, parts) in features.iter().zip(quantized) {
+        if parts.as_ref().is_some_and(|p| p.len() > 1) {
+            has_multi = true;
+        }
         match &f.geometry {
             Geometry::Point(_) => {}
             Geometry::MultiPoint(_) => {
@@ -434,6 +452,7 @@ fn count_geometry_streams(features: &[Feature]) -> usize {
 fn encode_geometry_streams(
     out: &mut Vec<u8>,
     features: &[Feature],
+    quantized: &[Option<Vec<QuantPolygon>>],
     west: f64,
     south: f64,
     east: f64,
@@ -445,7 +464,16 @@ fn encode_geometry_streams(
     //    Reference uses StreamType::Length(VarBinary), not Data(None).
     let geom_types: Vec<u32> = features
         .iter()
-        .map(|f| geometry_type_byte(&f.geometry) as u32)
+        .zip(quantized)
+        .map(|(f, parts)| {
+            if matches!(&f.geometry, Geometry::Polygon(_))
+                && parts.as_ref().is_some_and(|p| p.len() > 1)
+            {
+                GEOM_MULTI_POLYGON as u32
+            } else {
+                geometry_type_byte(&f.geometry) as u32
+            }
+        })
         .collect();
     let geom_type_runs = count_runs(&geom_types);
     if geom_type_runs * 2 < geom_types.len() {
@@ -487,8 +515,23 @@ fn encode_geometry_streams(
     let mut vertices_x: Vec<i32> = Vec::new();
     let mut vertices_y: Vec<i32> = Vec::new();
 
-    for feature in features {
-        collect_geometry_data(
+    for (feature, parts) in features.iter().zip(quantized) {
+        if let Some(parts) = parts {
+            if matches!(&feature.geometry, Geometry::MultiPolygon(_)) || parts.len() > 1 {
+                num_geometries.push(parts.len() as u32);
+            }
+            for qp in parts {
+                push_quant_polygon(
+                    qp,
+                    &mut num_parts,
+                    &mut num_rings,
+                    &mut vertices_x,
+                    &mut vertices_y,
+                );
+            }
+            continue;
+        }
+        collect_nonpolygon_geometry_data(
             &feature.geometry,
             west,
             south,
@@ -496,7 +539,6 @@ fn encode_geometry_streams(
             north,
             &mut num_geometries,
             &mut num_parts,
-            &mut num_rings,
             &mut vertices_x,
             &mut vertices_y,
         );
@@ -641,7 +683,7 @@ fn geometry_type_byte(geom: &Geometry) -> u8 {
     }
 }
 
-fn collect_geometry_data(
+fn collect_nonpolygon_geometry_data(
     geom: &Geometry,
     west: f64,
     south: f64,
@@ -649,7 +691,6 @@ fn collect_geometry_data(
     north: f64,
     num_geometries: &mut Vec<u32>,
     num_parts: &mut Vec<u32>,
-    num_rings: &mut Vec<u32>,
     vertices_x: &mut Vec<i32>,
     vertices_y: &mut Vec<i32>,
 ) {
@@ -686,16 +727,8 @@ fn collect_geometry_data(
                 }
             }
         }
-        Geometry::Polygon(poly) => {
-            let qp = quantize_polygon_or_dot(poly, west, south, east, north);
-            push_quant_polygon(&qp, num_parts, num_rings, vertices_x, vertices_y);
-        }
-        Geometry::MultiPolygon(mp) => {
-            let parts = quantize_multipolygon(mp, west, south, east, north);
-            num_geometries.push(parts.len() as u32);
-            for qp in &parts {
-                push_quant_polygon(qp, num_parts, num_rings, vertices_x, vertices_y);
-            }
+        Geometry::Polygon(_) | Geometry::MultiPolygon(_) => {
+            unreachable!("polygon parts are collected from shared quantization")
         }
     }
 }
@@ -2049,6 +2082,78 @@ mod tests {
         layers[0]
             .decode_all()
             .expect("mlt-core should decode minimal points");
+    }
+
+    #[test]
+    fn pinched_polygon_promotes_mlt_topology_without_losing_hole_or_identity() {
+        use crate::tiler::{tile_bounds, Feature, Geometry, PropertyValue, TileCoord};
+        use geo_types::{LineString, Polygon};
+        let coord = TileCoord { z: 6, x: 18, y: 24 };
+        let b = tile_bounds(&coord);
+        let inverse = |coords: &[(f64, f64)]| -> LineString<f64> {
+            let north = b.max().y.to_radians().tan().asinh();
+            let south = b.min().y.to_radians().tan().asinh();
+            coords
+                .iter()
+                .map(|&(x, y)| {
+                    (
+                        b.min().x + x / 4096.0 * (b.max().x - b.min().x),
+                        (north - y / 4096.0 * (north - south))
+                            .sinh()
+                            .atan()
+                            .to_degrees(),
+                    )
+                })
+                .collect()
+        };
+        let poly = Polygon::new(
+            inverse(&[
+                (100., 100.),
+                (110., 100.),
+                (110., 109.8),
+                (120., 109.8),
+                (120., 120.),
+                (110., 120.),
+                (109.8, 110.),
+                (100., 110.),
+                (100., 100.),
+            ]),
+            vec![inverse(&[
+                (102., 102.),
+                (102., 104.),
+                (104., 104.),
+                (104., 102.),
+                (102., 102.),
+            ])],
+        );
+        let features = vec![Feature {
+            id: Some(0),
+            geometry: Geometry::Polygon(poly),
+            properties: vec![PropertyValue::Int(-9007199254740993)],
+        }];
+        let bytes = encode_tile(&coord, &features, "pinch", &["value".into()]);
+        let mut decoded = mlt_core::parse_layers(&bytes).unwrap();
+        for layer in &mut decoded {
+            layer.decode_all().unwrap();
+        }
+        let json = serde_json::to_value(
+            mlt_core::geojson::FeatureCollection::from_layers(&decoded).unwrap(),
+        )
+        .unwrap();
+        let f = &json["features"][0];
+        assert_eq!(json["features"].as_array().unwrap().len(), 1);
+        assert_eq!(f["id"], 0u64);
+        assert_eq!(f["properties"]["value"], -9007199254740993i64);
+        assert_eq!(f["geometry"]["type"], "MultiPolygon");
+        let parts = f["geometry"]["coordinates"].as_array().unwrap();
+        assert_eq!(parts.len(), 2);
+        assert_eq!(
+            parts
+                .iter()
+                .map(|p| p.as_array().unwrap().len() - 1)
+                .sum::<usize>(),
+            1
+        );
     }
 
     #[test]

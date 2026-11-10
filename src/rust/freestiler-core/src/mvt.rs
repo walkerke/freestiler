@@ -2,8 +2,7 @@ use prost::Message;
 use std::collections::HashMap;
 
 use crate::quantize::{
-    lat_to_tile_coord, lon_to_tile_coord, quantize_multipolygon, quantize_polygon_or_dot,
-    QuantPolygon,
+    lat_to_tile_coord, lon_to_tile_coord, quantize_multipolygon, quantize_polygon, QuantPolygon,
 };
 use crate::tiler::{tile_bounds, Feature, Geometry, PropertyValue, TileCoord};
 
@@ -237,8 +236,12 @@ fn encode_geometry(geom: &Geometry, west: f64, south: f64, east: f64, north: f64
             cmds
         }
         Geometry::Polygon(poly) => {
-            let qp = quantize_polygon_or_dot(poly, west, south, east, north);
-            encode_quant_polygon_cmds(&qp, &mut 0, &mut 0)
+            let mut cmds = Vec::new();
+            let (mut cx, mut cy) = (0, 0);
+            for qp in quantize_polygon(poly, west, south, east, north) {
+                cmds.extend(encode_quant_polygon_cmds(&qp, &mut cx, &mut cy));
+            }
+            cmds
         }
         Geometry::MultiPolygon(mp) => {
             let mut cmds = Vec::new();
